@@ -1,12 +1,18 @@
-# Pitch Duel
+# Pitch Duel Poker
 
-Live one-on-one games in the browser. Sign in, see who is online, and challenge a player to either:
+A community poker room in the browser: No-Limit Texas Hold'em cash games and Sit & Go tournaments, with a wallet for every player and an admin page for the organiser.
 
-- **Cricket:** pick teams, toss, then one of you bowls while the other bats.
-- **Poker:** heads-up No-Limit Texas Hold'em with play chips, 1,000 chips each, blinds starting at 5/10 and rising gradually every 5 minutes, played until one player has them all.
+- `client/`: React (Vite)
+- `server/`: Node.js, Express, Socket.IO, MongoDB (Mongoose), nodemailer
 
-- `client/`: React (Vite), three.js for the 3D match view
-- `server/`: Node.js, Express, Socket.IO, MongoDB (Mongoose)
+## What it does
+
+- **Log in by email.** A six-digit code is emailed to the player; the login is then remembered on that device.
+- **Wallet.** Every player has a balance. Only an admin can add to it or deduct from it. Every change is recorded.
+- **Cash games.** Six tables at blinds 1/2, 2/4 and 5/10, each with six seats. Anyone can take an empty seat with 40 to 200 big blinds from their wallet, add chips, sit out, and stand up at any time (their chips go back to the wallet).
+- **Sit & Go.** Buy-ins of 100, 250, 500 and 1,000, as heads-up (winner takes all) or 6-Max (65% / 35%). A tournament starts as soon as it is full; everyone gets 1,500 chips and blinds rise every 5 minutes.
+- **Watch live.** Any running table can be opened by anyone. Hole cards stay hidden unless there is a showdown.
+- **Admin.** The organiser sees every player, adds or deducts balance with a note, views wallet history, and bans or unbans players.
 
 ## Run it locally
 
@@ -24,23 +30,32 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-Open http://localhost:5173. To play against yourself, open a second browser or an incognito window and log in as a different player.
+Settings live in `server/.env` (copy `server/.env.example` if it is missing). This file is never committed.
 
-Settings live in `server/.env` (copy `server/.env.example` if it is missing).
+| Setting | What it is for |
+| --- | --- |
+| `MONGO_URI` | The database. |
+| `JWT_SECRET` | Signs logins and login codes. Required on a live server. |
+| `SMTP_SERVICE` or `SMTP_HOST`/`SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | The mail account that sends login codes. For Gmail: `SMTP_SERVICE=gmail` and an app password. |
+| `ADMIN_EMAILS` | Comma-separated emails that may use the admin page. |
+| `ALLOW_DEV_LOGIN` | `true` shows a "play as a guest" box. For local testing only; guests have no proof of identity. |
 
-## Google sign-in
+With no SMTP settings on your own computer, the login code is printed in the server's terminal instead of being emailed.
 
-1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), create an **OAuth client ID** of type **Web application**.
-2. Add `http://localhost:5173` under **Authorised JavaScript origins**.
-3. Put the client ID in `server/.env` as `GOOGLE_CLIENT_ID=...` and restart the server.
+## How money is kept safe
 
-The Google button appears on the login page once the ID is set. Guest login (`ALLOW_DEV_LOGIN=true`) lets you test without Google; set it to `false` before putting the site online.
+- A wallet is changed in a single database step that also checks the balance, so two actions at once cannot overdraw it or create chips.
+- Chips taken to a table are moved out of the wallet and recorded against that table. Seated stacks are saved after every hand.
+- If the server stops, chips recorded on tables are returned to wallets when it starts again (cash stacks as last saved, tournament entries refunded in full).
+- The server alone deals cards and decides every hand. A player is only ever sent their own hole cards.
 
-## Single-process production run
+## Starting fresh
 
 ```bash
-cd client && npm run build
-cd ../server && npm start     # serves the API and the built site on port 4000
+cd server
+node scripts/reset-db.js                    # shows what is in the local database
+node scripts/reset-db.js --production       # shows what is in the live database
+node scripts/reset-db.js --production --yes # deletes it (cannot be undone)
 ```
 
 ## Deploy to EC2
@@ -52,7 +67,7 @@ Before the first deploy:
 1. **DNS:** point an A record for your domain at the instance's public IP.
 2. **EC2 security group:** allow inbound 22 (your IP), 80 and 443 (anywhere).
 3. **Atlas:** under Network Access, allow the instance's public IP.
-4. Paste your Atlas URL into `server/.env.production`.
+4. Put the live settings in `server/.env.production`: `MONGO_URI`, the `SMTP_...` lines and `ADMIN_EMAILS`.
 
 Then, from Git Bash in the project folder:
 
@@ -60,37 +75,23 @@ Then, from Git Bash in the project folder:
 ./deploy/deploy.sh /path/to/key.pem ubuntu@<instance-ip> play.example.com you@example.com
 ```
 
-Use `ec2-user@...` on Amazon Linux. The email is used only to issue the free HTTPS certificate. Run the same command again to ship an update.
+Run the same command again to ship an update. Restarting the server ends the hands in progress; chips on tables are returned to wallets.
 
 On the server: logs with `sudo journalctl -u pitch-duel -f`, restart with `sudo systemctl restart pitch-duel`.
-
-## How to play
-
-| Role | Controls |
-| --- | --- |
-| Bowler | Pick a bowler each over. Choose a variation (`1`-`4`), click the pitch to set where the ball lands, press `Space` to bowl. |
-| Batter | Swing as the ball reaches the bat: `←` leg side, `↑` straight, `→` off side, `↓` defend. Hold `Shift` to loft. On-screen buttons do the same. |
-
-Timing decides the result. Playing with the line of the ball (off-side ball to the off side) helps; lofting scores more but gets you caught when mistimed. A ball you miss that is on the stumps bowls you.
-
-Each step has a timer, so a player who goes idle gets an automatic choice. A player who disconnects has 45 seconds to come back before forfeiting.
 
 ## Where things are
 
 | File | What it does |
 | --- | --- |
-| `server/src/game/engine.js` | Cricket rules: delivery, timing, outcomes, scoring. No sockets, easy to tune. |
-| `server/src/game/matchRoom.js` | One live match: team select, toss, innings, timers. |
-| `server/src/realtime.js` | Online presence, challenges, socket events. |
-| `server/src/poker/pokerRoom.js` | Heads-up No-Limit Hold'em table: blinds, betting rounds, all-ins, showdown. |
-| `server/src/poker/handEval.js` | Poker hand ranking and the shuffled deck. |
-| `client/src/pages/Poker.jsx` | Poker table screen. |
-| `server/src/game/teams.js` | Teams and player ratings. |
-| `client/src/pages/Match.jsx` | Match screen and controls. |
-| `client/src/game/arena.js` | The 3D match view (three.js): ball flight, cameras, fielders, aiming. |
-| `client/src/game/world.js` | Stadium: outfield, pitch, stands, crowd, floodlights. |
-| `client/src/game/avatars.js` | Realistic player models: loading, team-colour repainting, and copying poses onto their skeletons. |
-| `client/public/models/` | The player model files (Microsoft Rocketbox, MIT licence; see `LICENSE.txt` there). |
-| `client/src/game/players.js` | Poses and animation (batting strokes, bowling action, running). |
-| `client/src/game/models.js` | Equipment (helmets, pads, bat) and the simple fallback figures. |
-| `client/src/game/sound.js` | Synthesised crowd, bat and stumps sounds. |
+| `server/src/poker/table.js` | One Hold'em table for 2 to 6 players: positions, betting, side pots, all-ins, showdown. |
+| `server/src/poker/manager.js` | Runs the cash tables and Sit & Go tournaments, and moves chips between wallets and tables. |
+| `server/src/poker/handEval.js` | Hand ranking, win percentages and the shuffled deck. |
+| `server/src/wallet.js` | Every wallet change, and returning stranded chips after a restart. |
+| `server/src/auth.js` | Email login codes and sessions. |
+| `server/src/admin.js` | Admin-only routes: players, balance changes, bans. |
+| `server/src/mailer.js` | Sends the login code by email. |
+| `server/scripts/reset-db.js` | Empties the database. |
+| `client/src/pages/Lobby.jsx` | Lobby: cash tables, Sit & Go, live games, wallet. |
+| `client/src/pages/Table.jsx` | The poker table. |
+| `client/src/pages/Admin.jsx` | Admin page. |
+| `client/src/audio/sound.js` | Table sounds and lobby music. |
