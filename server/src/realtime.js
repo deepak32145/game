@@ -50,6 +50,9 @@ export function setupRealtime(io) {
     on('poker:action', (p) => manager.act(uid, p));
     on('poker:show', (p) => manager.show(uid, p));
 
+    on('chat:send', (p) => manager.chatSend(uid, p));
+    on('chat:history', (p) => manager.chatHistory(socket, p));
+
     socket.on('disconnect', () => manager.disconnected(socket));
   });
 

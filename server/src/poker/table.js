@@ -36,6 +36,7 @@ export class Table {
     this.toAct = null;
     this.handResult = null;
     this.log = [];
+    this.handLog = []; // everything said during the current hand, oldest first
     this.events = [];
     this.eventSeq = 0;
     this.watchers = 0;
@@ -59,6 +60,7 @@ export class Table {
   say(text) {
     this.log.unshift(text);
     this.log.length = Math.min(this.log.length, 16);
+    if (this.handLog.length < 80) this.handLog.push(text);
   }
 
   changed() {
@@ -175,6 +177,7 @@ export class Table {
 
   startHand() {
     if (this.phase === 'closed') return;
+    this.handLog = [];
     for (const p of this.seated) {
       p.stack += p.pendingTopUp;
       p.pendingTopUp = 0;
@@ -527,11 +530,49 @@ export class Table {
     this.toAct = null;
     this.phase = 'between';
     this.afterHand = () => {
+      this.record();
       this.hooks.onHandEnd?.(this);
       if (this.phase !== 'closed') this.startHand();
     };
     this.setTimer(ms, this.afterHand);
     this.changed();
+  }
+
+  // Hand the finished hand to whoever keeps the history (once per hand).
+  record() {
+    const hr = this.handResult;
+    if (!hr || !this.hooks.record || this.recordedHand === this.handNo) return;
+    this.recordedHand = this.handNo;
+    try {
+      this.hooks.record({
+        tableId: this.id,
+        tableName: this.name,
+        kind: this.kind,
+        handNo: this.handNo,
+        blinds: [this.sb, this.bb],
+        button: this.button,
+        board: [...this.board],
+        pot: Object.values(hr.won).reduce((a, b) => a + b, 0),
+        showdown: hr.showdown,
+        players: this.players.map((p) => ({
+          uid: p.uid,
+          name: p.name,
+          seat: p.seat,
+          cards: p.cards,
+          revealed: hr.showdown && !p.folded ? p.cards : hr.shown?.uid === p.uid ? hr.shown.cards.map((c) => c || '') : [],
+          start: p.handStartStack,
+          won: hr.won[p.uid] || 0,
+          net: (hr.won[p.uid] || 0) - p.committed,
+          folded: p.folded,
+          hand: hr.hands?.[p.uid] || '',
+        })),
+        uids: this.players.map((p) => p.uid),
+        log: [...this.handLog],
+        at: new Date(),
+      });
+    } catch (err) {
+      console.error(`table ${this.id} could not record a hand`, err);
+    }
   }
 
   // ---- what each person is allowed to see ------------------------------------

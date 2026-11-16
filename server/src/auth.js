@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { config } from './config.js';
-import { User, Txn, LoginCode } from './models.js';
+import { User, Txn, LoginCode, Hand, HAND_KEEP_DAYS } from './models.js';
 import { sendLoginCode } from './mailer.js';
 import { selfView } from './poker/manager.js';
 
@@ -165,6 +165,56 @@ router.post('/auth/email/verify', async (req, res) => {
 router.get('/me', requireUser, (req, res) => res.json(selfView(req.user)));
 
 // A player's own recent wallet history.
+// ---- hand history: only hands the player was dealt into, and only cards they are allowed to see ----
+const handView = (h, uid) => ({
+  id: h._id.toString(),
+  at: h.at,
+  tableName: h.tableName,
+  kind: h.kind,
+  handNo: h.handNo,
+  blinds: h.blinds,
+  button: h.button,
+  board: h.board,
+  pot: h.pot,
+  showdown: h.showdown,
+  log: h.log,
+  players: h.players.map((p) => ({
+    uid: p.uid,
+    name: p.name,
+    seat: p.seat,
+    cards: (p.uid === uid ? p.cards : p.revealed).map((c) => c || null),
+    start: p.start,
+    won: p.won,
+    net: p.net,
+    folded: p.folded,
+    hand: p.hand,
+  })),
+});
+
+router.get('/hands', requireUser, async (req, res) => {
+  const uid = req.user._id.toString();
+  const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+  const limit = Math.min(50, num(req.query.limit) || 20);
+  const from = num(req.query.from);
+  const to = [num(req.query.to), num(req.query.before)].filter(Boolean).sort((a, b) => a - b)[0];
+  const find = { uids: uid };
+  if (typeof req.query.table === 'string' && req.query.table) find.tableName = req.query.table.slice(0, 80);
+  if (from || to) find.at = { ...(from ? { $gte: new Date(from) } : {}), ...(to ? { $lt: new Date(to) } : {}) };
+  const hands = await Hand.find(find).sort({ at: -1 }).limit(limit + 1).lean();
+  res.json({ hands: hands.slice(0, limit).map((h) => handView(h, uid)), more: hands.length > limit });
+});
+
+// The tables the player has hands at, for the filter.
+router.get('/hands/tables', requireUser, async (req, res) => {
+  const rows = await Hand.aggregate([
+    { $match: { uids: req.user._id.toString() } },
+    { $group: { _id: '$tableName', hands: { $sum: 1 }, last: { $max: '$at' } } },
+    { $sort: { last: -1 } },
+    { $limit: 60 },
+  ]);
+  res.json({ tables: rows.map((r) => ({ name: r._id, hands: r.hands })), keepDays: HAND_KEEP_DAYS });
+});
+
 router.get('/wallet/txns', requireUser, async (req, res) => {
   const txns = await Txn.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(30);
   res.json(txns.map((t) => ({ type: t.type, amount: t.amount, balanceAfter: t.balanceAfter, ref: t.ref || '', note: t.note || '', at: t.createdAt })));

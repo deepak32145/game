@@ -8,6 +8,7 @@ import Admin from './pages/Admin.jsx';
 import { pokerSfx } from './audio/sound.js';
 
 const STORAGE_KEY = 'pitch_duel_auth';
+const NO_CHAT = [];
 
 // The strip of open tables. One tap switches table; the lobby stays one tap away for joining another.
 function TableTabs({ tables, active, onPick, onClose, onLobby }) {
@@ -60,6 +61,7 @@ export default function App() {
   const [lobby, setLobby] = useState(null);
   const [tables, setTables] = useState({}); // every table I am seated at or watching, by id
   const [active, setActive] = useState(null); // the table on screen; null shows the lobby
+  const [chats, setChats] = useState({}); // table id -> what has been said there
   const [page, setPage] = useState('lobby'); // 'lobby' | 'admin'
   const [toast, setToast] = useState('');
   const [banned, setBanned] = useState(false);
@@ -150,6 +152,7 @@ export default function App() {
         return next;
       })
     );
+    s.on('chat:msg', ({ tableId, msg }) => setChats((prev) => ({ ...prev, [tableId]: [...(prev[tableId] || []).slice(-49), msg] })));
     s.on('notice', setToast);
     s.on('banned', () => {
       logout();
@@ -232,6 +235,8 @@ export default function App() {
           table={table}
           me={me}
           socket={socket}
+          chat={chats[table.id] || NO_CHAT}
+          onChatHistory={(msgs) => setChats((prev) => ({ ...prev, [table.id]: msgs }))}
           canJoin={canJoin}
           maxTables={maxTables}
           nav={tabs(() => setActive(null))}

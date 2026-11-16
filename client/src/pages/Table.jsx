@@ -15,6 +15,13 @@ const ACT_LABEL = { check: 'CHECK', call: 'CALL', bet: 'BET', raise: 'RAISE', al
 const Unit = createContext({ fmt: (n) => n.toLocaleString(), toggle: () => {} });
 const SWITCH_HINT = 'Tap to switch between chips and big blinds';
 
+// Table talk: one tap sends a reaction or a stock phrase.
+const QUICK_EMOJI = ['👍', '👏', '😂', '😎', '🤯', '😭', '😡', '🤑', '🔥', '💰', '🃏', '♠️', '♥️', '🎰', '🦈', '🐟', '🐔', '🤡', '💀', '🍀', '🙏', '🥶', '🚀', '🤝'];
+const QUICK_TEXT = ['Nice hand', 'GG', 'Good luck', 'Thanks', 'Unlucky', 'Bluff?', 'Ship it!', 'Wow'];
+const BUBBLE_MS = 4000;
+// A message that is only an emoji or two is shown big, without a speech bubble.
+const isEmojiOnly = (text) => !/[\x00-\x7F]/.test(text) && [...text].length <= 4;
+
 function BlindClock({ ms, level }) {
   const [end, setEnd] = useState(() => Date.now() + ms);
   const [, tick] = useState(0);
@@ -126,7 +133,7 @@ function BuyIn({ view, me, seat, socket, onClose, topUp }) {
   );
 }
 
-export default function Table({ table: view, me, socket, canJoin, maxTables, nav, onLobby, onClose }) {
+export default function Table({ table: view, me, socket, canJoin, maxTables, nav, onLobby, onClose, chat, onChatHistory }) {
   const max = view.maxSeats;
   const seated = view.mySeat != null;
   const mySeat = seated ? view.seats[view.mySeat] : null;
@@ -265,6 +272,44 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
     return () => clearInterval(t);
   }, [turnKey]);
 
+  // ---- chat ----
+  const [chatOpen, setChatOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [unread, setUnread] = useState(0);
+  const [bubbles, setBubbles] = useState({}); // uid -> the message floating over their seat
+  const seenChat = useRef(null); // id of the newest message already dealt with; null until the history has loaded
+  const chatEnd = useRef(null);
+  const lastChatId = chat.length ? chat[chat.length - 1].id : 0;
+  useEffect(() => {
+    socket.emit('chat:history', { tableId: view.id }, (r) => {
+      const msgs = r?.ok ? r.msgs : [];
+      seenChat.current = msgs.length ? msgs[msgs.length - 1].id : 0;
+      if (r?.ok) onChatHistory(msgs);
+    });
+  }, []);
+  useEffect(() => {
+    if (seenChat.current === null) return;
+    const fresh = chat.filter((m) => m.id > seenChat.current);
+    seenChat.current = Math.max(seenChat.current, lastChatId);
+    if (!fresh.length) return;
+    if (!chatOpen) setUnread((n) => n + fresh.filter((m) => m.uid !== me.id).length);
+    setBubbles((b) => ({ ...b, ...Object.fromEntries(fresh.map((m) => [m.uid, m])) }));
+    const t = setTimeout(() => setBubbles((b) => Object.fromEntries(Object.entries(b).filter(([, m]) => !fresh.includes(m)))), BUBBLE_MS);
+    return () => clearTimeout(t);
+  }, [lastChatId]);
+  useEffect(() => {
+    if (!chatOpen) return;
+    setUnread(0);
+    chatEnd.current?.scrollIntoView({ block: 'end' });
+  }, [chatOpen, lastChatId]);
+  const sendChat = (text) => {
+    text = text.trim();
+    if (!text) return;
+    socket.emit('chat:send', { tableId: view.id, text }, (r) => setChatError(r?.ok ? '' : r?.error || 'Could not send'));
+    setDraft('');
+  };
+
   // ---- betting controls ----
   useEffect(() => {
     setRaiseTo(view.minRaiseTo);
@@ -362,6 +407,9 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
             {view.watchers > 0 && <span className="pk-eye" title="People watching">👁 {view.watchers}</span>}
           </div>
           <div className="pk-top-buttons">
+            <button className={`btn ghost pk-icon pk-chat-btn ${chatOpen ? 'on' : ''}`} onClick={() => setChatOpen(!chatOpen)} title="Table chat" aria-label="Table chat">
+              💬{unread > 0 && <i className="pk-unread">{unread > 9 ? '9+' : unread}</i>}
+            </button>
             <button className="btn ghost pk-icon" onClick={() => setShowMenu(!showMenu)} title="Table menu and hand history">☰</button>
             <button className="btn ghost pk-unit" onClick={unit.toggle} title={SWITCH_HINT}>{inBB ? 'BB' : 'Chips'}</button>
             <button
@@ -438,6 +486,9 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
                       {badge && <span key={`${badge.type}${badge.amount}`} className={`pk-act ${badge.type}`}>{ACT_LABEL[badge.type]}{badge.amount ? ` ${unit.fmt(badge.amount)}` : ''}</span>}
                       {won && <span className="pk-ribbon">+{unit.fmt(result.won[p.uid])}</span>}
                       {p.away && !p.sittingOut && <span className="st-away">away</span>}
+                      {bubbles[p.uid] && (
+                        <span key={bubbles[p.uid].id} className={`st-bubble ${isEmojiOnly(bubbles[p.uid].text) ? 'big' : ''}`}>{bubbles[p.uid].text}</span>
+                      )}
                       {view.sbSeat === seat && <span className="pos-tag sb" title="Small blind">SB</span>}
                       {view.bbSeat === seat && <span className="pos-tag bb" title="Big blind">BB</span>}
                     </div>
@@ -591,6 +642,48 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
             </div>
           )}
         </div>
+
+        {chatOpen && (
+          <div className="pk-chat" role="dialog" aria-label="Table chat">
+            <div className="pk-chat-head">
+              <b>Table chat</b>
+              <button className="btn ghost pk-icon" onClick={() => setChatOpen(false)} aria-label="Close chat">✕</button>
+            </div>
+            <div className="pk-chat-list">
+              {chat.length === 0 && <p className="muted small">Nobody has said anything yet. Say hello!</p>}
+              {chat.map((m) => (
+                <div key={m.id} className={`pk-chat-msg ${m.uid === me.id ? 'mine' : ''} ${isEmojiOnly(m.text) ? 'big' : ''}`}>
+                  <b>{m.uid === me.id ? 'You' : m.name}</b>
+                  <span>{m.text}</span>
+                </div>
+              ))}
+              <div ref={chatEnd} />
+            </div>
+            {seated ? (
+              <>
+                <div className="pk-chat-quick emoji">
+                  {QUICK_EMOJI.map((e) => <button key={e} onClick={() => sendChat(e)} aria-label={`Send ${e}`}>{e}</button>)}
+                </div>
+                <div className="pk-chat-quick">
+                  {QUICK_TEXT.map((t) => <button key={t} onClick={() => sendChat(t)}>{t}</button>)}
+                </div>
+                {chatError && <p className="error small">{chatError}</p>}
+                <form
+                  className="pk-chat-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    sendChat(draft);
+                  }}
+                >
+                  <input value={draft} maxLength={120} placeholder="Say something…" onChange={(e) => setDraft(e.target.value)} aria-label="Message" />
+                  <button className="btn primary" disabled={!draft.trim()}>Send</button>
+                </form>
+              </>
+            ) : (
+              <p className="muted small pk-chat-note">Take a seat to join the chat. You can read along while watching.</p>
+            )}
+          </div>
+        )}
 
         {buyIn && <BuyIn view={view} me={me} seat={buyIn.seat} topUp={buyIn.topUp} socket={socket} onClose={() => setBuyIn(null)} />}
       </div>

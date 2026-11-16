@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { sfx, music } from '../audio/sound.js';
 import { Avatar, TxnList, money } from '../ui.jsx';
+import Hands from './Hands.jsx';
 
 // The poker lobby: your wallet at a glance, cash tables, Sit & Go tournaments, live games to watch.
 
@@ -82,6 +83,7 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onO
     ['cash', 'Cash games', cash.reduce((n, t) => n + t.players.length, 0)],
     ['sng', 'Sit & Go', sngs.filter((s) => s.status === 'registering').reduce((n, s) => n + s.registered.length, 0)],
     ['live', 'Live', live.length],
+    ['hands', 'Hands', 0],
     ['wallet', 'Wallet', 0],
   ];
 
@@ -275,6 +277,8 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onO
           )}
         </section>
       )}
+
+      {tab === 'hands' && <Hands token={token} me={me} />}
 
       {tab === 'wallet' && (
         <section className="wallet">

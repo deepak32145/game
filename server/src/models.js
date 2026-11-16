@@ -44,6 +44,43 @@ const loginCodeSchema = new mongoose.Schema({
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
 });
 
+// One finished hand, kept so players can look back at what happened.
+// `cards` are every player's real hole cards and are only ever sent to that player;
+// `revealed` is what was turned over at the table, which anyone in the hand may see.
+export const HAND_KEEP_DAYS = 30;
+const handSchema = new mongoose.Schema({
+  tableId: String,
+  tableName: String,
+  kind: String, // 'cash' | 'sng'
+  handNo: Number,
+  blinds: [Number],
+  button: Number,
+  board: [String],
+  pot: Number,
+  showdown: Boolean,
+  players: [
+    {
+      _id: false,
+      uid: String,
+      name: String,
+      seat: Number,
+      cards: [String],
+      revealed: [String],
+      start: Number, // stack at the start of the hand
+      won: Number,
+      net: Number, // won minus what they put in
+      folded: Boolean,
+      hand: String, // e.g. "Pair of Aces", when it went to a showdown
+    },
+  ],
+  uids: [String], // who was dealt in, for looking hands up by player
+  log: [String],
+  // MongoDB deletes each hand by itself once it is this old.
+  at: { type: Date, default: Date.now, index: { expires: HAND_KEEP_DAYS * 86400 } },
+});
+handSchema.index({ uids: 1, at: -1 });
+
 export const User = mongoose.model('User', userSchema);
+export const Hand = mongoose.model('Hand', handSchema);
 export const Txn = mongoose.model('Txn', txnSchema);
 export const LoginCode = mongoose.model('LoginCode', loginCodeSchema);

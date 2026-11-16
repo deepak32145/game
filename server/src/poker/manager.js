@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Table } from './table.js';
-import { User } from '../models.js';
+import { User, Hand } from '../models.js';
 import * as wallet from '../wallet.js';
 
 // Runs every poker table: the permanent cash tables and the Sit & Go tournaments.
@@ -115,6 +115,41 @@ export function createManager(io) {
   }
 
   const fail = (error) => ({ ok: false, error });
+  // Hands are saved in the background: a slow or failed save never holds up the game.
+  const saveHand = (hand) => Hand.create(hand).catch((err) => console.error('could not save a hand', err.message));
+
+  // ---- table chat ----
+  const chats = new Map(); // table id -> the last messages said there
+  const lastChatAt = new Map(); // user id -> when they last spoke, to stop flooding
+  let chatSeq = 0;
+  const CHAT_KEEP = 50;
+  const CHAT_GAP_MS = 700;
+
+  function chatSend(uid, { tableId, text }) {
+    const table = tables.get(tableId);
+    const p = table?.seatOf(uid);
+    if (!p) return fail('Take a seat at the table to chat');
+    text = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!text) return fail('Type a message first');
+    const now = Date.now();
+    if (now - (lastChatAt.get(uid) || 0) < CHAT_GAP_MS) return fail('Slow down a little');
+    lastChatAt.set(uid, now);
+    const msg = { id: ++chatSeq, uid, name: p.name, text, at: now };
+    const list = chats.get(tableId) || [];
+    list.push(msg);
+    if (list.length > CHAT_KEEP) list.shift();
+    chats.set(tableId, list);
+    for (const q of table.seated) io.to(room(q.uid)).emit('chat:msg', { tableId, msg });
+    io.to(watchRoom(tableId)).emit('chat:msg', { tableId, msg });
+    return { ok: true };
+  }
+
+  // Anyone at the table, playing or watching, can read what was said.
+  function chatHistory(socket, { tableId }) {
+    const table = tables.get(tableId);
+    if (!table || !(table.seatOf(socket.data.uid) || socket.data.watching.has(tableId))) return fail('Open the table first');
+    return { ok: true, msgs: chats.get(tableId) || [] };
+  }
   const playerInfo = (user) => ({ uid: user._id.toString(), name: user.name, picture: user.picture || '' });
 
   // Open a table on this screen: your own view if you are seated there, otherwise as a spectator.
@@ -192,6 +227,7 @@ export function createManager(io) {
       blinds: [sb, bb],
       onChange: emitTable,
       hooks: {
+        record: saveHand,
         info: () => ({ minBuyIn: bb * MIN_BUYIN_BB, maxBuyIn: bb * MAX_BUYIN_BB }),
         onHandEnd: (t) => {
           for (const p of [...t.seated]) {
@@ -340,6 +376,7 @@ export function createManager(io) {
       blinds: SNG_LEVELS[0],
       onChange: emitTable,
       hooks: {
+        record: saveHand,
         beforeHand: (t) => {
           const level = levelAt();
           if (level !== s.level) {
@@ -377,6 +414,7 @@ export function createManager(io) {
             setTimeout(() => {
               tables.delete(t.id);
               sngs.delete(s.id);
+              chats.delete(t.id);
               io.to(room(winner.uid)).emit('table:closed', { id: t.id });
               io.to(watchRoom(t.id)).emit('table:closed', { id: t.id });
               for (const sid of io.sockets.adapter.rooms.get(watchRoom(t.id)) || []) {
@@ -498,7 +536,7 @@ export function createManager(io) {
   };
 
   return {
-    connected, disconnected, watch, closeView, lobbyState, emitMe, kick,
+    connected, disconnected, watch, closeView, lobbyState, emitMe, kick, chatSend, chatHistory,
     cashSit, cashTopUp, standUp, sngRegister, sngUnregister,
     act: (uid, { tableId, ...action }) => tableOf(uid, tableId)?.act(uid, action),
     show: (uid, { tableId, which }) => tableOf(uid, tableId)?.show(uid, which),
