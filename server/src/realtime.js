@@ -37,21 +37,18 @@ export function setupRealtime(io) {
 
     on('lobby:get', () => ({ ok: true, lobby: manager.lobbyState() }));
     on('table:watch', ({ tableId }) => manager.watch(socket, tableId));
-    on('table:unwatch', () => {
-      manager.unwatch(socket);
-      socket.emit('table:state', null);
-    });
+    on('table:unwatch', ({ tableId }) => manager.closeView(socket, tableId));
 
     on('cash:sit', (p) => manager.cashSit(uid, p));
-    on('cash:leave', () => manager.standUp(uid));
+    on('cash:leave', ({ tableId }) => manager.standUp(uid, tableId));
     on('cash:topup', (p) => manager.cashTopUp(uid, p));
-    on('cash:sitout', ({ on: value }) => manager.sitOut(uid, value));
+    on('cash:sitout', (p) => manager.sitOut(uid, p));
 
     on('sng:register', (p) => manager.sngRegister(uid, p));
-    on('sng:unregister', () => manager.sngUnregister(uid));
+    on('sng:unregister', (p) => manager.sngUnregister(uid, p));
 
     on('poker:action', (p) => manager.act(uid, p));
-    on('poker:show', ({ which }) => manager.show(uid, which));
+    on('poker:show', (p) => manager.show(uid, p));
 
     socket.on('disconnect', () => manager.disconnected(socket));
   });

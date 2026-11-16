@@ -24,7 +24,7 @@ function MiniTable({ players, max, title, sub, tone = 'low' }) {
   );
 }
 
-export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
+export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onOpen, nav }) {
   const [tab, setTab] = useState('cash');
   const [notice, setNotice] = useState('');
   const [txns, setTxns] = useState(null);
@@ -50,7 +50,7 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
     if (tab === 'wallet') api('/wallet/txns', { token }).then(setTxns).catch(() => setTxns([]));
   }, [tab, me.balance]);
 
-  const open = (tableId) => socket.emit('table:watch', { tableId }, (r) => !r.ok && setNotice(r.error));
+  const open = (tableId) => onOpen(tableId, setNotice);
   const ask = (event, payload) => {
     setNotice('');
     socket.emit(event, payload, (r) => !r.ok && setNotice(r.error));
@@ -59,9 +59,10 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
   const cash = lobby?.cash || [];
   const sngs = lobby?.sng || [];
   const stakes = [...new Set(cash.map((t) => t.blinds.join('/')))];
-  const mySng = sngs.find((s) => s.ids.includes(me.id));
-  const myCash = cash.find((t) => t.ids.includes(me.id));
-  const busy = !!mySng || !!myCash;
+  const mine = new Set(me.games.map((g) => g.id)); // every table and tournament I am in
+  const maxTables = lobby?.maxTables || 4;
+  const full = mine.size >= maxTables;
+  const waitingSngs = sngs.filter((s) => s.status === 'registering' && mine.has(s.id));
   const running = sngs.filter((s) => s.status === 'running');
   const live = [
     ...cash.filter((t) => t.players.length >= 2).map((t) => ({ id: t.id, name: t.name, kind: 'Cash game', players: t.players, max: t.maxSeats, title: t.blinds.join('/'), sub: t.pot ? `pot ${t.pot}` : 'blinds', tone: STAKE_CLASS[t.blinds[1]], detail: `${t.players.length} players${t.watchers ? ` · ${t.watchers} watching` : ''}` })),
@@ -70,10 +71,10 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
   const tablesRunning = cash.filter((t) => t.playing).length + running.length;
 
   // "Quick seat": the busiest table with a free seat that your wallet can afford.
-  const quick = busy
+  const quick = full
     ? null
     : cash
-        .filter((t) => t.players.length < t.maxSeats && t.minBuyIn <= me.balance)
+        .filter((t) => !mine.has(t.id) && t.players.length < t.maxSeats && t.minBuyIn <= me.balance)
         .sort((a, b) => b.players.length - a.players.length || a.blinds[1] - b.blinds[1])[0];
   const lowestBuyIn = cash.length ? Math.min(...cash.map((t) => t.minBuyIn)) : 0;
 
@@ -125,13 +126,11 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
           <div className="stat"><span>Games running</span><b>{tablesRunning}</b></div>
         </div>
         <div className="welcome-cta">
-          {myCash ? (
-            <button className="btn primary big" onClick={() => open(myCash.id)}>Return to {myCash.name}</button>
-          ) : mySng ? (
-            <span className="muted small">Registered for a Sit & Go ({mySng.registered.length}/{mySng.size})</span>
+          {full ? (
+            <span className="muted small">You are in {maxTables} games, the most allowed at once. Leave one to join another.</span>
           ) : quick ? (
             <button className="btn primary big" onClick={() => open(quick.id)}>
-              Quick seat <span className="cta-sub">{quick.name}</span>
+              {mine.size ? 'Add a table' : 'Quick seat'} <span className="cta-sub">{quick.name}</span>
             </button>
           ) : (
             <span className="muted small">
@@ -141,13 +140,23 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
         </div>
       </section>
 
-      {notice && <div className="notice" onClick={() => setNotice('')}>{notice}</div>}
-      {mySng && mySng.status === 'registering' && (
-        <div className="notice info">
-          You are registered for the {money(mySng.buyIn)} {mySng.size === 2 ? 'Heads-up' : '6-Max'} Sit & Go ({mySng.registered.length}/{mySng.size}). It starts as soon as it is full.
-          <button className="btn ghost" onClick={() => ask('sng:unregister', {})}>Unregister</button>
-        </div>
+      {nav && (
+        <section className="my-tables">
+          <div className="my-tables-head">
+            <b>Your open tables</b>
+            <span className="muted small">{mine.size} of {maxTables} games · tap one to go back to it</span>
+          </div>
+          {nav}
+        </section>
       )}
+
+      {notice && <div className="notice" onClick={() => setNotice('')}>{notice}</div>}
+      {waitingSngs.map((s) => (
+        <div key={s.id} className="notice info">
+          You are registered for the {money(s.buyIn)} {s.size === 2 ? 'Heads-up' : '6-Max'} Sit & Go ({s.registered.length}/{s.size}). It starts as soon as it is full.
+          <button className="btn ghost" onClick={() => ask('sng:unregister', { id: s.id })}>Unregister</button>
+        </div>
+      ))}
 
       <nav className="tabs">
         {TABS.map(([id, label, count]) => (
@@ -161,7 +170,7 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
       {tab === 'cash' && (
         <section>
           <p className="muted small tab-note">
-            No-Limit Hold'em, up to 6 players. Sit down with 40 to 200 big blinds from your wallet; stand up any time and your chips go back to it.
+            No-Limit Hold'em, up to 6 players. Sit down with 40 to 200 big blinds from your wallet; stand up any time and your chips go back to it. You can play up to {maxTables} tables at once.
           </p>
           {stakes.map((s) => {
             const group = cash.filter((t) => t.blinds.join('/') === s);
@@ -171,10 +180,10 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
                 <h3><span className={`stake-badge tone-${tone}`}>{s}</span> Blinds {s} <span className="muted">· buy-in {money(group[0].minBuyIn)} to {money(group[0].maxBuyIn)}</span></h3>
                 <div className="table-cards">
                   {group.map((t) => {
-                    const mine = t.ids.includes(me.id);
-                    const canSit = t.players.length < t.maxSeats && !busy;
+                    const seatedHere = mine.has(t.id);
+                    const canSit = t.players.length < t.maxSeats && !full;
                     return (
-                      <div key={t.id} className={`table-card tone-${tone} ${mine ? 'mine' : ''}`}>
+                      <div key={t.id} className={`table-card tone-${tone} ${seatedHere ? 'mine' : ''}`}>
                         <div className="table-card-head">
                           <b>{t.name}</b>
                           <span className={`status ${t.playing ? 'available' : 'in_match'}`}>{t.playing ? 'Playing' : t.players.length ? 'Waiting' : 'Open'}</span>
@@ -182,8 +191,8 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
                         <MiniTable players={t.players} max={t.maxSeats} title={s} sub={t.playing && t.pot ? `pot ${t.pot}` : 'blinds'} tone={tone} />
                         <div className="table-card-foot">
                           <span className="muted small">{t.players.length}/{t.maxSeats} seated{t.watchers ? ` · ${t.watchers} watching` : ''}</span>
-                          <button className={`btn ${canSit || mine ? 'primary' : ''}`} onClick={() => open(t.id)}>
-                            {mine ? 'Return to table' : canSit ? 'Take a seat' : 'Watch'}
+                          <button className={`btn ${canSit || seatedHere ? 'primary' : ''}`} onClick={() => open(t.id)}>
+                            {seatedHere ? 'Return to table' : canSit ? 'Take a seat' : 'Watch'}
                           </button>
                         </div>
                       </div>
@@ -206,9 +215,9 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
               <h3>{size === 2 ? 'Heads-up' : '6-Max'} <span className="muted">· {size === 2 ? 'winner takes all' : 'top two are paid'}</span></h3>
               <div className="table-cards">
                 {sngs.filter((s) => s.size === size && s.status === 'registering').sort((a, b) => a.buyIn - b.buyIn).map((s) => {
-                  const mine = s.ids.includes(me.id);
+                  const registered = mine.has(s.id);
                   return (
-                    <div key={s.id} className={`table-card ticket ${mine ? 'mine' : ''}`}>
+                    <div key={s.id} className={`table-card ticket ${registered ? 'mine' : ''}`}>
                       <div className="table-card-head">
                         <b>{money(s.buyIn)} buy-in</b>
                         <span className="status in_match">{s.registered.length}/{s.size}</span>
@@ -224,11 +233,11 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin }) {
                         <i style={{ width: `${(s.registered.length / s.size) * 100}%` }} />
                       </div>
                       <div className="muted small names">{s.registered.length ? s.registered.join(', ') : 'Be the first to register'}</div>
-                      {mine ? (
-                        <button className="btn" onClick={() => ask('sng:unregister', {})}>Unregister</button>
+                      {registered ? (
+                        <button className="btn" onClick={() => ask('sng:unregister', { id: s.id })}>Unregister</button>
                       ) : (
-                        <button className="btn primary" disabled={busy || me.balance < s.buyIn} onClick={() => ask('sng:register', { id: s.id })}>
-                          {me.balance < s.buyIn ? 'Not enough balance' : busy ? 'Already in a game' : 'Register'}
+                        <button className="btn primary" disabled={full || me.balance < s.buyIn} onClick={() => ask('sng:register', { id: s.id })}>
+                          {me.balance < s.buyIn ? 'Not enough balance' : full ? `Already in ${maxTables} games` : 'Register'}
                         </button>
                       )}
                     </div>

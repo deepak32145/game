@@ -1,12 +1,48 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { api } from './api.js';
 import Login from './pages/Login.jsx';
 import Lobby from './pages/Lobby.jsx';
 import Table from './pages/Table.jsx';
 import Admin from './pages/Admin.jsx';
+import { pokerSfx } from './audio/sound.js';
 
 const STORAGE_KEY = 'pitch_duel_auth';
+
+// The strip of open tables. One tap switches table; the lobby stays one tap away for joining another.
+function TableTabs({ tables, active, onPick, onClose, onLobby }) {
+  const ids = Object.keys(tables);
+  if (ids.length === 0) return null;
+  return (
+    <nav className="ttabs" aria-label="Your open tables">
+      {onLobby && <button className="ttab lobby-tab" onClick={onLobby} title="Back to the lobby to join another table">＋ Lobby</button>}
+      {ids.map((id) => {
+        const t = tables[id];
+        const seated = t.mySeat != null;
+        const turn = seated && t.toAct === t.mySeat && t.phase === 'hand';
+        const label = t.kind === 'cash' ? `${t.blinds[0]}/${t.blinds[1]} ${t.name.split(' ').pop()}` : `SNG ${t.info?.buyIn ?? ''}`;
+        return (
+          <button key={id} className={`ttab ${active === id ? 'active' : ''} ${turn ? 'turn' : ''}`} onClick={() => onPick(id)} title={t.name}>
+            <b>{label}</b>
+            <span>{!seated ? 'watching' : turn ? 'Your turn' : t.seats[t.mySeat].stack.toLocaleString()}</span>
+            {!seated && (
+              <i
+                role="button"
+                aria-label="Close this table"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(id);
+                }}
+              >
+                ✕
+              </i>
+            )}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
 
 function loadAuth() {
   try {
@@ -22,7 +58,8 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [me, setMe] = useState(null); // my account, including wallet, kept current by the server
   const [lobby, setLobby] = useState(null);
-  const [table, setTable] = useState(null); // the table I am seated at or watching
+  const [tables, setTables] = useState({}); // every table I am seated at or watching, by id
+  const [active, setActive] = useState(null); // the table on screen; null shows the lobby
   const [page, setPage] = useState('lobby'); // 'lobby' | 'admin'
   const [toast, setToast] = useState('');
   const [banned, setBanned] = useState(false);
@@ -40,7 +77,8 @@ export default function App() {
     localStorage.removeItem(STORAGE_KEY);
     setAuth(null);
     setMe(null);
-    setTable(null);
+    setTables({});
+    setActive(null);
     setLobby(null);
     setPage('lobby');
     setVerified(false);
@@ -102,7 +140,16 @@ export default function App() {
     });
     s.on('me', setMe);
     s.on('lobby:state', setLobby);
-    s.on('table:state', setTable);
+    s.on('tables:reset', () => setTables({}));
+    s.on('table:state', (t) => t && setTables((prev) => ({ ...prev, [t.id]: t })));
+    s.on('table:closed', ({ id }) =>
+      setTables((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      })
+    );
     s.on('notice', setToast);
     s.on('banned', () => {
       logout();
@@ -122,6 +169,23 @@ export default function App() {
     const t = setTimeout(() => setToast(''), 6000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // A table I am seated at that appears while I am in the lobby (a Sit & Go starting, or coming
+  // back to the site) opens by itself. It never pulls me away from a table I am looking at.
+  const ids = Object.keys(tables);
+  const known = useRef(new Set());
+  useEffect(() => {
+    const fresh = ids.filter((id) => !known.current.has(id));
+    fresh.forEach((id) => known.current.add(id));
+    const mine = fresh.find((id) => tables[id].mySeat != null);
+    if (mine) setActive((cur) => (cur && tables[cur] ? cur : mine));
+  }, [ids.join('|')]);
+
+  // A ping when it becomes my turn at a table that is not the one on screen.
+  const waitingOnMe = ids.filter((id) => id !== active && tables[id].mySeat != null && tables[id].toAct === tables[id].mySeat && tables[id].phase === 'hand');
+  useEffect(() => {
+    if (waitingOnMe.length) pokerSfx.yourTurn();
+  }, [waitingOnMe.join('|')]);
 
   if (!auth) {
     return (
@@ -143,17 +207,41 @@ export default function App() {
   }
   if (verified !== true || !socket || !me) return <div className="center-screen">Signing you in…</div>;
 
-  const inGame = me.inPlay > 0;
+  const games = me.games || [];
+  const maxTables = lobby?.maxTables || 4;
+  const canJoin = games.length < maxTables;
+  const table = active ? tables[active] : null;
+
+  const openTable = (id, onError) => {
+    if (tables[id]) return setActive(id);
+    socket.emit('table:watch', { tableId: id }, (r) => (r.ok ? setActive(id) : onError?.(r.error)));
+  };
+  const closeTable = (id) => {
+    socket.emit('table:unwatch', { tableId: id });
+    if (active === id) setActive(null);
+  };
+  const tabs = (onLobby) => <TableTabs tables={tables} active={table ? active : null} onPick={setActive} onClose={closeTable} onLobby={onLobby} />;
+
   return (
     <>
       {!connected && <div className="offline-bar">Reconnecting to server…</div>}
       {toast && <div className="toast" onClick={() => setToast('')}>{toast}</div>}
       {table ? (
-        <Table key={table.id} table={table} me={{ ...me, inGame }} socket={socket} />
+        <Table
+          key={table.id}
+          table={table}
+          me={me}
+          socket={socket}
+          canJoin={canJoin}
+          maxTables={maxTables}
+          nav={tabs(() => setActive(null))}
+          onLobby={() => setActive(null)}
+          onClose={() => closeTable(table.id)}
+        />
       ) : page === 'admin' && me.isAdmin ? (
         <Admin token={token} onBack={() => setPage('lobby')} />
       ) : (
-        <Lobby me={me} lobby={lobby} token={token} socket={socket} onLogout={logout} onAdmin={() => setPage('admin')} />
+        <Lobby me={{ ...me, games }} lobby={lobby} token={token} socket={socket} onLogout={logout} onAdmin={() => setPage('admin')} onOpen={openTable} nav={tabs(null)} />
       )}
     </>
   );

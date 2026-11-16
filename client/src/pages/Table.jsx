@@ -88,7 +88,7 @@ function BuyIn({ view, me, seat, socket, onClose, topUp }) {
   const short = max < min;
   const go = () => {
     setBusy(true);
-    socket.emit(topUp ? 'cash:topup' : 'cash:sit', topUp ? { amount } : { tableId: view.id, seat, amount }, (r) => {
+    socket.emit(topUp ? 'cash:topup' : 'cash:sit', topUp ? { tableId: view.id, amount } : { tableId: view.id, seat, amount }, (r) => {
       setBusy(false);
       if (r.ok) onClose();
       else setError(r.error);
@@ -126,7 +126,7 @@ function BuyIn({ view, me, seat, socket, onClose, topUp }) {
   );
 }
 
-export default function Table({ table: view, me, socket }) {
+export default function Table({ table: view, me, socket, canJoin, maxTables, nav, onLobby, onClose }) {
   const max = view.maxSeats;
   const seated = view.mySeat != null;
   const mySeat = seated ? view.seats[view.mySeat] : null;
@@ -270,7 +270,8 @@ export default function Table({ table: view, me, socket }) {
     setRaiseTo(view.minRaiseTo);
   }, [view.minRaiseTo, view.handNo, view.street]);
 
-  const act = (type, amount) => socket.emit('poker:action', { type, amount });
+  const tableId = view.id;
+  const act = (type, amount) => socket.emit('poker:action', { tableId, type, amount });
   const clampRaise = (v) => Math.max(view.minRaiseTo, Math.min(view.maxRaiseTo, Math.round(v) || 0));
   const amount = clampRaise(raiseTo);
   const potAfterCall = view.pot + view.toCall;
@@ -292,14 +293,12 @@ export default function Table({ table: view, me, socket }) {
     setPre(null);
   }, [myTurn]);
 
-  const toLobby = () => {
-    if (seated && !finished && !isCash) return; // a tournament seat cannot be given up
-    if (seated && isCash) {
-      if (!window.confirm(`Stand up and take your ${mySeat.stack.toLocaleString()} chips back to your wallet?`)) return;
-      socket.emit('cash:leave', {}, () => socket.emit('table:unwatch'));
-    } else {
-      socket.emit('table:unwatch');
-    }
+  // Going to the lobby keeps your seat: the table stays open in the strip at the top.
+  // A spectator, or anyone at a finished tournament, closes the table instead.
+  const toLobby = () => (seated && !finished ? onLobby() : onClose());
+  const standUp = () => {
+    if (!window.confirm(`Stand up and take your ${mySeat.stack.toLocaleString()} chips back to your wallet?`)) return;
+    socket.emit('cash:leave', { tableId }, () => onClose());
   };
 
   // Which cards make the winning hands: those are lifted and lit, the rest are dimmed.
@@ -312,7 +311,7 @@ export default function Table({ table: view, me, socket }) {
   const inHandLive = seated && mySeat.inHand && !mySeat.folded && !hr;
   const canShow = !!hr && !hr.showdown && seated && hr.winners[0] === me.id;
   const info = view.info || {};
-  const canTakeSeat = isCash && !seated && !me.inGame;
+  const canTakeSeat = isCash && !seated && canJoin;
   const lastResult = info.results?.length ? [...info.results].sort((a, b) => a.place - b.place) : null;
 
   const menu = (
@@ -320,10 +319,10 @@ export default function Table({ table: view, me, socket }) {
       {seated && isCash && (
         <div className="pk-menu">
           <button className="btn" onClick={() => setBuyIn({ topUp: true })}>Add chips</button>
-          <button className="btn" onClick={() => socket.emit('cash:sitout', { on: !mySeat.sittingOut })}>
+          <button className="btn" onClick={() => socket.emit('cash:sitout', { tableId, on: !mySeat.sittingOut })}>
             {mySeat.sittingOut ? "I'm back" : 'Sit out next hand'}
           </button>
-          <button className="btn" onClick={toLobby}>Stand up</button>
+          <button className="btn" onClick={standUp}>Stand up</button>
         </div>
       )}
       {!isCash && info.prizes && (
@@ -343,10 +342,15 @@ export default function Table({ table: view, me, socket }) {
   return (
     <Unit.Provider value={unit}>
       <div className="pk-page">
+        {nav}
         <header className="pk-top">
-          <button className="btn ghost pk-back" onClick={toLobby} disabled={seated && !finished && !isCash} title={seated && !isCash && !finished ? 'You are in this tournament until you are knocked out' : 'Back to the lobby'}>
-            ‹ Lobby
-          </button>
+          {seated && isCash && !finished ? (
+            <button className="btn ghost pk-back" onClick={standUp} title="Stand up and take your chips back to your wallet">Stand up</button>
+          ) : (
+            <button className="btn ghost pk-back" onClick={toLobby} title={seated && !finished ? 'Back to the lobby. You stay in this tournament.' : 'Close this table'}>
+              {seated && !finished ? '‹ Lobby' : '✕ Close'}
+            </button>
+          )}
           <div className="pk-info">
             <span className="pk-tname">{view.name}</span>
             <span className="pk-blinds-pill"><b>{view.blinds[0]}/{view.blinds[1]}</b></span>
@@ -480,7 +484,7 @@ export default function Table({ table: view, me, socket }) {
                   {lastResult.map((r) => (
                     <small key={r.uid}>{r.place}. {r.name}{r.prize ? ` — wins ${money(r.prize)}` : ''}</small>
                   ))}
-                  <button className="btn primary big" onClick={() => socket.emit('table:unwatch')}>Back to lobby</button>
+                  <button className="btn primary big" onClick={onClose}>Back to lobby</button>
                 </div>
               )}
             </div>
@@ -540,7 +544,7 @@ export default function Table({ table: view, me, socket }) {
                 <>
                   <span>You are watching this table.</span>
                   {canTakeSeat && <span className="muted small">Tap an empty seat to sit down (buy-in {money(info.minBuyIn)} to {money(info.maxBuyIn)}).</span>}
-                  {isCash && !canTakeSeat && <span className="muted small">You are already in another game.</span>}
+                  {isCash && !canTakeSeat && <span className="muted small">You are already playing {maxTables} tables, the most allowed at once.</span>}
                 </>
               ) : revealing ? (
                 'All-in! Running out the board…'
@@ -556,11 +560,11 @@ export default function Table({ table: view, me, socket }) {
                     <div className="pk-show">
                       <span>Show:</span>
                       {[['first', 0], ['second', 1]].map(([which, i]) => (
-                        <button key={which} className="btn" disabled={!!hr.shown?.cards[i]} onClick={() => socket.emit('poker:show', { which })}>
+                        <button key={which} className="btn" disabled={!!hr.shown?.cards[i]} onClick={() => socket.emit('poker:show', { tableId, which })}>
                           <CardName card={mySeat.cards[i]} />
                         </button>
                       ))}
-                      <button className="btn" disabled={!!(hr.shown?.cards[0] && hr.shown?.cards[1])} onClick={() => socket.emit('poker:show', { which: 'both' })}>
+                      <button className="btn" disabled={!!(hr.shown?.cards[0] && hr.shown?.cards[1])} onClick={() => socket.emit('poker:show', { tableId, which: 'both' })}>
                         Both
                       </button>
                     </div>
@@ -569,7 +573,7 @@ export default function Table({ table: view, me, socket }) {
               ) : mySeat.sittingOut ? (
                 <>
                   <span>You are sitting out.</span>
-                  <button className="btn primary" onClick={() => socket.emit('cash:sitout', { on: false })}>I'm back</button>
+                  <button className="btn primary" onClick={() => socket.emit('cash:sitout', { tableId, on: false })}>I'm back</button>
                 </>
               ) : view.phase === 'waiting' ? (
                 <span>Waiting for another player to join…</span>
