@@ -349,7 +349,7 @@ export default function Table({ table: view, me, socket }) {
           </button>
           <div className="pk-info">
             <span className="pk-tname">{view.name}</span>
-            <span><b>{view.blinds[0]}/{view.blinds[1]}</b></span>
+            <span className="pk-blinds-pill"><b>{view.blinds[0]}/{view.blinds[1]}</b></span>
             {info.nextBlinds && !finished && (
               <span className="pk-next">
                 {info.nextBlinds[0]}/{info.nextBlinds[1]} in <BlindClock ms={info.nextLevelIn} level={info.level} />
@@ -434,6 +434,8 @@ export default function Table({ table: view, me, socket }) {
                       {badge && <span key={`${badge.type}${badge.amount}`} className={`pk-act ${badge.type}`}>{ACT_LABEL[badge.type]}{badge.amount ? ` ${unit.fmt(badge.amount)}` : ''}</span>}
                       {won && <span className="pk-ribbon">+{unit.fmt(result.won[p.uid])}</span>}
                       {p.away && !p.sittingOut && <span className="st-away">away</span>}
+                      {view.sbSeat === seat && <span className="pos-tag sb" title="Small blind">SB</span>}
+                      {view.bbSeat === seat && <span className="pos-tag bb" title="Big blind">BB</span>}
                     </div>
                     {handName && <div className={`pk-handname ${result?.hands ? '' : 'live'}`}>{handName}</div>}
                   </div>
@@ -459,6 +461,7 @@ export default function Table({ table: view, me, socket }) {
                 </div>
                 <div className="pk-pot">
                   {revealing && <span className="pk-allin">ALL-IN</span>}
+                  {view.phase === 'hand' && view.street && !revealing && <span className="pk-street">{view.street}</span>}
                   <span className="pk-pot-label">POT</span>
                   <Chips amount={pot} bigBlind={bigBlind} />
                 </div>

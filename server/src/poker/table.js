@@ -561,6 +561,8 @@ export class Table {
       board: this.board,
       pot: this.pot + this.players.reduce((sum, p) => sum + p.bet, 0),
       button: this.button,
+      sbSeat: this.phase === 'hand' ? this.sbSeat : null,
+      bbSeat: this.phase === 'hand' ? this.bbSeat : null,
       seats: this.seats.map((p) => p && {
         seat: p.seat,
         uid: p.uid,

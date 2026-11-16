@@ -151,11 +151,27 @@ export default function Login({ onLogin }) {
   const nothing = config && !config.emailLogin && !config.googleClientId && !config.devLogin;
 
   return (
-    <div className="center-screen login">
+    <div className="landing">
+      <section className="landing-hero">
+        <div className="brand"><i className="brand-mark">♠</i>Pitch Duel <span>Poker</span></div>
+        <h1>Poker night, <em>any night.</em></h1>
+        <p>A private poker room for your community. Pull up a seat at a cash table, or race for the prize in a Sit & Go.</p>
+        <div className="fan" aria-hidden="true">
+          <span>A<small>♠</small></span>
+          <span className="r">K<small>♥</small></span>
+          <span>Q<small>♣</small></span>
+          <span className="r">J<small>♦</small></span>
+          <span>10<small>♠</small></span>
+        </div>
+        <ul className="landing-points">
+          <li><i>♣</i><div><b>Cash games</b><span>Blinds 1/2, 2/4 and 5/10. Six seats a table, sit down and stand up when you like.</span></div></li>
+          <li><i>🏆</i><div><b>Sit & Go tournaments</b><span>Heads-up or 6-Max, starting the moment the table fills.</span></div></li>
+          <li><i>👁</i><div><b>Watch live</b><span>Open any running table and follow the action.</span></div></li>
+        </ul>
+      </section>
       <div className="login-card">
-        <div className="logo">♠</div>
-        <h1>Pitch Duel Poker</h1>
-        <p className="muted">Cash games and Sit & Go tournaments with the community. No-Limit Hold'em, up to six players a table.</p>
+        <h2>Log in to play</h2>
+        <p className="muted small">New here? The same form creates your account.</p>
 
         {config?.emailLogin && <EmailLogin onLogin={onLogin} setError={setError} />}
 
@@ -196,6 +212,7 @@ export default function Login({ onLogin }) {
 
         {nothing && <p className="error">No login method is configured on the server.</p>}
         {error && <p className="error" role="alert">{error}</p>}
+        <p className="landing-foot">Your login is remembered on this device. Play responsibly.</p>
       </div>
     </div>
   );
