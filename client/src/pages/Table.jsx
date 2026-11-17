@@ -410,7 +410,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
             <button className={`btn ghost pk-icon pk-chat-btn ${chatOpen ? 'on' : ''}`} onClick={() => setChatOpen(!chatOpen)} title="Table chat" aria-label="Table chat">
               💬{unread > 0 && <i className="pk-unread">{unread > 9 ? '9+' : unread}</i>}
             </button>
-            <button className="btn ghost pk-icon" onClick={() => setShowMenu(!showMenu)} title="Table menu and hand history">☰</button>
+            <button className="btn ghost pk-icon pk-menu-btn" onClick={() => setShowMenu(!showMenu)} title="Table menu and hand history">☰</button>
             <button className="btn ghost pk-unit" onClick={unit.toggle} title={SWITCH_HINT}>{inBB ? 'BB' : 'Chips'}</button>
             <button
               className="btn ghost pk-icon"

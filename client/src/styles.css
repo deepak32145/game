@@ -730,7 +730,7 @@ select {
   .pk-odds { left: auto; right: calc(100% + 8px); }
 }
 @media (min-width: 901px) {
-  .pk-top-buttons .pk-icon:first-child { display: none; }
+  .pk-top-buttons .pk-menu-btn { display: none; } /* the side panel is always open on a wide screen */
 }
 /* Very short screens (small phones, or a phone with the keyboard or a tall browser bar showing) */
 @media (max-height: 620px) and (max-width: 900px) {
