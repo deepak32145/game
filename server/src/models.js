@@ -55,6 +55,9 @@ const handSchema = new mongoose.Schema({
   handNo: Number,
   blinds: [Number],
   button: Number,
+  maxSeats: Number,
+  sbSeat: Number,
+  bbSeat: Number,
   board: [String],
   pot: Number,
   showdown: Boolean,
@@ -63,6 +66,7 @@ const handSchema = new mongoose.Schema({
       _id: false,
       uid: String,
       name: String,
+      picture: String,
       seat: Number,
       cards: [String],
       revealed: [String],
@@ -75,6 +79,10 @@ const handSchema = new mongoose.Schema({
   ],
   uids: [String], // who was dealt in, for looking hands up by player
   log: [String],
+  // Every step of the hand in order, for the replayer. st: blinds are 'preflop', the payout is 'result';
+  // t: sb, bb, fold, check, call, bet, raise, return (uncalled chips back), win, show;
+  // a: the amount (for bet and raise the total bet); stack, bet, pot: right after this step.
+  actions: [{ _id: false, st: String, seat: Number, t: String, a: Number, stack: Number, bet: Number, pot: Number }],
   // MongoDB deletes each hand by itself once it is this old.
   at: { type: Date, default: Date.now, index: { expires: HAND_KEEP_DAYS * 86400 } },
 });

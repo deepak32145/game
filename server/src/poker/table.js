@@ -37,6 +37,7 @@ export class Table {
     this.handResult = null;
     this.log = [];
     this.handLog = []; // everything said during the current hand, oldest first
+    this.actions = []; // what each player did during the current hand, for the replayer
     this.events = [];
     this.eventSeq = 0;
     this.watchers = 0;
@@ -61,6 +62,13 @@ export class Table {
     this.log.unshift(text);
     this.log.length = Math.min(this.log.length, 16);
     if (this.handLog.length < 80) this.handLog.push(text);
+  }
+
+  // Step by step record of the hand for the replayer: who did what, and the chips right after it.
+  track(p, t, a = 0, st = this.street) {
+    if (this.actions.length >= 200) return;
+    const pot = this.pot + this.players.reduce((sum, q) => sum + q.bet, 0);
+    this.actions.push({ st, seat: p.seat, t, a, stack: p.stack, bet: p.bet, pot });
   }
 
   changed() {
@@ -178,6 +186,7 @@ export class Table {
   startHand() {
     if (this.phase === 'closed') return;
     this.handLog = [];
+    this.actions = [];
     for (const p of this.seated) {
       p.stack += p.pendingTopUp;
       p.pendingTopUp = 0;
@@ -229,7 +238,9 @@ export class Table {
       q.cards = [this.deck.pop(), this.deck.pop()];
     }
     this.pay(sb, this.sb);
+    this.track(sb, 'sb', sb.bet, 'preflop');
     this.pay(bb, this.bb);
+    this.track(bb, 'bb', bb.bet, 'preflop');
     this.street = 'preflop';
     this.currentBet = this.bb;
     this.lastRaise = this.bb;
@@ -317,6 +328,7 @@ export class Table {
         p.canRaise = false;
         const kind = p.allIn ? 'allin' : opened ? 'bet' : 'raise';
         p.act = { type: kind, amount: to };
+        this.track(p, opened ? 'bet' : 'raise', to);
         this.note(kind, uid);
         this.say(`${p.name} ${opened ? 'bets' : 'raises to'} ${to}${p.allIn ? ' and is all-in' : ''}.`);
         this.turnTo(this.players.indexOf(p) + 1);
@@ -329,6 +341,7 @@ export class Table {
       else {
         p.folded = true;
         p.act = { type: 'fold' };
+        this.track(p, 'fold');
         this.note('fold', uid);
         this.say(`${p.name} folds.`);
         if (this.live().length === 1) this.winByFold();
@@ -340,11 +353,13 @@ export class Table {
     if (type === 'call' && owed > 0) {
       const paid = this.pay(p, owed);
       p.act = { type: p.allIn ? 'allin' : 'call', amount: p.bet };
+      this.track(p, 'call', paid);
       this.note(p.allIn ? 'allin' : 'call', uid);
       this.say(`${p.name} calls ${paid}${p.allIn ? ' and is all-in' : ''}.`);
     } else if (type === 'check' || type === 'call') {
       if (owed > 0) return; // cannot check facing a bet
       p.act = { type: 'check' };
+      this.track(p, 'check');
       this.note('check', uid);
       this.say(`${p.name} checks.`);
     } else {
@@ -363,6 +378,7 @@ export class Table {
     }
     p.folded = true;
     p.act = { type: 'fold' };
+    this.track(p, 'fold');
     this.say(`${p.name} folds.`);
     if (this.live().length === 1) this.winByFold();
     else if (this.toAct) this.turnTo(this.players.indexOf(this.toAct)); // the round may now be complete
@@ -379,6 +395,7 @@ export class Table {
       top.committed -= extra;
       top.stack += extra;
       top.allIn = false;
+      this.track(top, 'return', extra);
     }
   }
 
@@ -440,6 +457,7 @@ export class Table {
     const won = this.pot;
     winner.stack += won;
     this.pot = 0;
+    this.track(winner, 'win', won, 'result');
     this.say(`${winner.name} wins ${won}.`);
     this.handResult = { showdown: false, winners: [winner.uid], won: { [winner.uid]: won }, text: `${winner.name} wins ${won}` };
     this.finishHand(FOLD_MS);
@@ -486,6 +504,7 @@ export class Table {
       potResults.push({ amount: pot.amount, winners: winners.map((w) => w.uid) });
     }
     this.pot = 0;
+    for (const p of this.players) if (won[p.uid]) this.track(p, 'win', won[p.uid], 'result');
 
     const top = Object.entries(won).sort((a, b) => b[1] - a[1]);
     const nameOf = (uid) => this.players.find((p) => p.uid === uid).name;
@@ -520,6 +539,7 @@ export class Table {
     if (which !== 'second') cards[0] = p.cards[0];
     if (which !== 'first') cards[1] = p.cards[1];
     hr.shown = { uid, cards };
+    this.track(p, 'show', 0, 'result');
     this.note('show', uid);
     this.say(`${p.name} shows ${cards.filter(Boolean).join(' ')}.`);
     this.setTimer(SHOWN_MS, this.afterHand);
@@ -551,12 +571,16 @@ export class Table {
         handNo: this.handNo,
         blinds: [this.sb, this.bb],
         button: this.button,
+        maxSeats: this.maxSeats,
+        sbSeat: this.sbSeat,
+        bbSeat: this.bbSeat,
         board: [...this.board],
         pot: Object.values(hr.won).reduce((a, b) => a + b, 0),
         showdown: hr.showdown,
         players: this.players.map((p) => ({
           uid: p.uid,
           name: p.name,
+          picture: p.picture || '',
           seat: p.seat,
           cards: p.cards,
           revealed: hr.showdown && !p.folded ? p.cards : hr.shown?.uid === p.uid ? hr.shown.cards.map((c) => c || '') : [],
@@ -568,6 +592,7 @@ export class Table {
         })),
         uids: this.players.map((p) => p.uid),
         log: [...this.handLog],
+        actions: [...this.actions],
         at: new Date(),
       });
     } catch (err) {

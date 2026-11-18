@@ -35,7 +35,7 @@ function BlindClock({ ms, level }) {
   return <b>{Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</b>;
 }
 
-function Card({ card, mark = '', style }) {
+export function Card({ card, mark = '', style }) {
   if (!card) return <div className={`pk-card back ${mark}`} style={style} />;
   const rank = card[0] === 'T' ? '10' : card[0];
   const suit = SUIT[card[1]];

@@ -169,18 +169,24 @@ router.get('/me', requireUser, (req, res) => res.json(selfView(req.user)));
 const handView = (h, uid) => ({
   id: h._id.toString(),
   at: h.at,
+  tableId: h.tableId,
   tableName: h.tableName,
   kind: h.kind,
   handNo: h.handNo,
   blinds: h.blinds,
   button: h.button,
+  maxSeats: h.maxSeats || 6,
+  sbSeat: h.sbSeat ?? null,
+  bbSeat: h.bbSeat ?? null,
   board: h.board,
   pot: h.pot,
   showdown: h.showdown,
   log: h.log,
+  actions: h.actions || [],
   players: h.players.map((p) => ({
     uid: p.uid,
     name: p.name,
+    picture: p.picture || '',
     seat: p.seat,
     cards: (p.uid === uid ? p.cards : p.revealed).map((c) => c || null),
     start: p.start,
@@ -199,9 +205,66 @@ router.get('/hands', requireUser, async (req, res) => {
   const to = [num(req.query.to), num(req.query.before)].filter(Boolean).sort((a, b) => a - b)[0];
   const find = { uids: uid };
   if (typeof req.query.table === 'string' && req.query.table) find.tableName = req.query.table.slice(0, 80);
+  if (typeof req.query.tableId === 'string' && req.query.tableId) find.tableId = req.query.tableId.slice(0, 80);
   if (from || to) find.at = { ...(from ? { $gte: new Date(from) } : {}), ...(to ? { $lt: new Date(to) } : {}) };
   const hands = await Hand.find(find).sort({ at: -1 }).limit(limit + 1).lean();
   res.json({ hands: hands.slice(0, limit).map((h) => handView(h, uid)), more: hands.length > limit });
+});
+
+// The player's games: each unbroken sitting at one table (a whole tournament, or a cash session
+// with no gap longer than GAME_GAP_MS between hands), with who they played against.
+const GAME_GAP_MS = 20 * 60 * 1000;
+router.get('/hands/games', requireUser, async (req, res) => {
+  const uid = req.user._id.toString();
+  const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+  const from = num(req.query.from);
+  const to = num(req.query.to);
+  const find = { uids: uid };
+  if (typeof req.query.table === 'string' && req.query.table) find.tableName = req.query.table.slice(0, 80);
+  if (from || to) find.at = { ...(from ? { $gte: new Date(from) } : {}), ...(to ? { $lt: new Date(to) } : {}) };
+  const rows = await Hand.find(find, { tableId: 1, tableName: 1, kind: 1, blinds: 1, at: 1, 'players.uid': 1, 'players.name': 1, 'players.picture': 1, 'players.net': 1 })
+    .sort({ at: -1 })
+    .limit(5000)
+    .lean();
+  const open = new Map(); // table id -> the game being built for it (rows run newest first)
+  const games = [];
+  for (const h of rows) {
+    const mine = h.players.find((p) => p.uid === uid);
+    if (!mine) continue;
+    const key = h.tableId || h.tableName;
+    let g = open.get(key);
+    if (!g || (h.kind !== 'sng' && g.start - h.at > GAME_GAP_MS)) {
+      g = { tableId: h.tableId, tableName: h.tableName, kind: h.kind, blinds: h.blinds, start: h.at, end: h.at, hands: 0, won: 0, net: 0, opp: new Map() };
+      open.set(key, g);
+      games.push(g);
+    }
+    g.start = h.at;
+    g.hands += 1;
+    g.net += mine.net;
+    if (mine.net > 0) g.won += 1;
+    for (const p of h.players) {
+      if (p.uid === uid) continue;
+      const o = g.opp.get(p.uid) || { name: p.name, picture: p.picture || '', hands: 0 };
+      o.hands += 1;
+      g.opp.set(p.uid, o);
+    }
+  }
+  res.json({
+    games: games.map((g) => ({
+      id: `${g.tableId || g.tableName}@${new Date(g.start).getTime()}`,
+      tableId: g.tableId,
+      tableName: g.tableName,
+      kind: g.kind,
+      blinds: g.blinds,
+      start: g.start,
+      end: g.end,
+      hands: g.hands,
+      won: g.won,
+      net: g.net,
+      opponents: [...g.opp.values()].sort((a, b) => b.hands - a.hands).slice(0, 8),
+    })),
+    capped: rows.length === 5000,
+  });
 });
 
 // The tables the player has hands at, for the filter.
