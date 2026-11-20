@@ -15,7 +15,7 @@ const SIT_OUT_LIMIT_MS = 5 * 60 * 1000; // a sitting-out player keeps a cash sea
 const OFFLINE_LIMIT_MS = 60 * 1000; // a disconnected cash player is stood up after this long
 
 export const SNG_BUYINS = [100, 250, 500, 1000];
-export const SNG_SIZES = [2, 6];
+export const SNG_SIZES = [2, 3, 6];
 const SNG_STACK = 1500;
 const SNG_LEVEL_MS = Number(process.env.POKER_LEVEL_MS) || 5 * 60 * 1000;
 // Small steps, so there is time to play.
@@ -24,7 +24,7 @@ const SNG_LEVELS = [
   [75, 150], [100, 200], [125, 250], [150, 300], [200, 400], [300, 600], [400, 800], [500, 1000],
 ];
 // Share of the prize pool by finishing place.
-const SNG_PRIZES = { 2: [1], 6: [0.65, 0.35] };
+const SNG_PRIZES = { 2: [1], 3: [1], 6: [0.65, 0.35] };
 const prizesFor = (buyIn, size) => SNG_PRIZES[size].map((share) => Math.floor(buyIn * size * share));
 
 export function createManager(io) {
@@ -370,7 +370,7 @@ export function createManager(io) {
     const levelAt = () => Math.min(Math.floor((Date.now() - s.startedAt) / SNG_LEVEL_MS), SNG_LEVELS.length - 1);
     const table = new Table({
       id: s.id,
-      name: `${s.buyIn} Sit & Go · ${s.size === 2 ? 'Heads-up' : '6-Max'}`,
+      name: `${s.buyIn} Sit & Go · ${s.size === 2 ? 'Heads-up' : `${s.size}-Max`}`,
       kind: 'sng',
       maxSeats: s.size,
       blinds: SNG_LEVELS[0],

@@ -165,7 +165,7 @@ export default function Login({ onLogin }) {
         </div>
         <ul className="landing-points">
           <li><i>♣</i><div><b>Cash games</b><span>Blinds 1/2, 2/4 and 5/10. Six seats a table, sit down and stand up when you like.</span></div></li>
-          <li><i>🏆</i><div><b>Sit & Go tournaments</b><span>Heads-up or 6-Max, starting the moment the table fills.</span></div></li>
+          <li><i>🏆</i><div><b>Sit & Go tournaments</b><span>Heads-up, 3-Max or 6-Max, starting the moment the table fills.</span></div></li>
           <li><i>👁</i><div><b>Watch live</b><span>Open any running table and follow the action.</span></div></li>
         </ul>
       </section>

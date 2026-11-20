@@ -4,6 +4,8 @@ import { sfx, music } from '../audio/sound.js';
 import { Avatar, TxnList, money } from '../ui.jsx';
 import Hands from './Hands.jsx';
 
+const sizeName = (size) => (size === 2 ? 'Heads-up' : `${size}-Max`);
+
 // The poker lobby: your wallet at a glance, cash tables, Sit & Go tournaments, live games to watch.
 
 const STAKE_CLASS = { 2: 'low', 4: 'mid', 10: 'high' };
@@ -67,7 +69,7 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onO
   const running = sngs.filter((s) => s.status === 'running');
   const live = [
     ...cash.filter((t) => t.players.length >= 2).map((t) => ({ id: t.id, name: t.name, kind: 'Cash game', players: t.players, max: t.maxSeats, title: t.blinds.join('/'), sub: t.pot ? `pot ${t.pot}` : 'blinds', tone: STAKE_CLASS[t.blinds[1]], detail: `${t.players.length} players${t.watchers ? ` · ${t.watchers} watching` : ''}` })),
-    ...running.map((s) => ({ id: s.tableId, name: `${money(s.buyIn)} Sit & Go`, kind: s.size === 2 ? 'Heads-up tournament' : '6-Max tournament', players: Array.from({ length: s.left }, (_, i) => ({ name: s.registered[i] || '?' })), max: s.size, title: s.blinds.join('/'), sub: 'blinds', tone: 'gold', detail: `${s.left} of ${s.size} left · prize ${money(s.prizes[0])}` })),
+    ...running.map((s) => ({ id: s.tableId, name: `${money(s.buyIn)} Sit & Go`, kind: `${sizeName(s.size)} tournament`, players: Array.from({ length: s.left }, (_, i) => ({ name: s.registered[i] || '?' })), max: s.size, title: s.blinds.join('/'), sub: 'blinds', tone: 'gold', detail: `${s.left} of ${s.size} left · prize ${money(s.prizes[0])}` })),
   ];
   const tablesRunning = cash.filter((t) => t.playing).length + running.length;
 
@@ -155,7 +157,7 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onO
       {notice && <div className="notice" onClick={() => setNotice('')}>{notice}</div>}
       {waitingSngs.map((s) => (
         <div key={s.id} className="notice info">
-          You are registered for the {money(s.buyIn)} {s.size === 2 ? 'Heads-up' : '6-Max'} Sit & Go ({s.registered.length}/{s.size}). It starts as soon as it is full.
+          You are registered for the {money(s.buyIn)} {sizeName(s.size)} Sit & Go ({s.registered.length}/{s.size}). It starts as soon as it is full.
           <button className="btn ghost" onClick={() => ask('sng:unregister', { id: s.id })}>Unregister</button>
         </div>
       ))}
@@ -212,9 +214,9 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onO
           <p className="muted small tab-note">
             A tournament that starts as soon as every seat is filled. Everyone begins with {(lobby?.stack || 1500).toLocaleString()} chips, blinds rise every {lobby?.levelMinutes || 5} minutes, and play continues until one player has all the chips.
           </p>
-          {[2, 6].map((size) => (
+          {[2, 3, 6].map((size) => (
             <div key={size} className="stake-group">
-              <h3>{size === 2 ? 'Heads-up' : '6-Max'} <span className="muted">· {size === 2 ? 'winner takes all' : 'top two are paid'}</span></h3>
+              <h3>{sizeName(size)} <span className="muted">· {size === 6 ? 'top two are paid' : 'winner takes all'}</span></h3>
               <div className="table-cards">
                 {sngs.filter((s) => s.size === size && s.status === 'registering').sort((a, b) => a.buyIn - b.buyIn).map((s) => {
                   const registered = mine.has(s.id);

@@ -492,7 +492,13 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
                       {view.sbSeat === seat && <span className="pos-tag sb" title="Small blind">SB</span>}
                       {view.bbSeat === seat && <span className="pos-tag bb" title="Big blind">BB</span>}
                     </div>
-                    {handName && <div className={`pk-handname ${result?.hands ? '' : 'live'}`}>{handName}</div>}
+                    {handName && (
+                      <div className={`pk-handname ${result?.hands ? '' : 'live'}`} title={handName}>
+                        {/* On a phone the short form ("Two pair") is shown, so it fits between the seats */}
+                        <span className="hn-full">{handName}</span>
+                        <span className="hn-short">{handName.split(',')[0]}</span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
