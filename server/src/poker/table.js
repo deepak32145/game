@@ -613,6 +613,8 @@ export class Table {
         uids: this.players.map((p) => p.uid),
         log: [...this.handLog],
         actions: [...this.actions],
+        rabbit: hr.rabbit ? [...hr.rabbit.cards] : [],
+        rabbitBy: hr.rabbit ? hr.rabbit.by : '',
         at: new Date(),
       });
     } catch (err) {

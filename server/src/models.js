@@ -83,6 +83,8 @@ const handSchema = new mongoose.Schema({
   // t: sb, bb, fold, check, call, bet, raise, return (uncalled chips back), win, show;
   // a: the amount (for bet and raise the total bet); stack, bet, pot: right after this step.
   actions: [{ _id: false, st: String, seat: Number, t: String, a: Number, stack: Number, bet: Number, pot: Number }],
+  rabbit: [String], // board cards revealed by a rabbit hunt after the hand, if anyone asked
+  rabbitBy: String,
   // MongoDB deletes each hand by itself once it is this old.
   at: { type: Date, default: Date.now, index: { expires: HAND_KEEP_DAYS * 86400 } },
 });

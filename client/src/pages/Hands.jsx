@@ -174,7 +174,7 @@ function GameHands({ token, me, game, onBack }) {
         </>
       )}
       {replay != null && hands?.[replay] && (
-        <Replayer hands={hands} index={replay} me={me} onIndex={setReplay} onClose={() => setReplay(null)} />
+        <Replayer token={token} hands={hands} index={replay} me={me} onIndex={setReplay} onClose={() => setReplay(null)} />
       )}
     </section>
   );

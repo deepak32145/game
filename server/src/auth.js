@@ -6,7 +6,9 @@ import { OAuth2Client } from 'google-auth-library';
 import { config } from './config.js';
 import { User, Txn, LoginCode, Hand, HAND_KEEP_DAYS } from './models.js';
 import { sendLoginCode } from './mailer.js';
+import mongoose from 'mongoose';
 import { selfView } from './poker/manager.js';
+import { bestHand, equityMulti } from './poker/handEval.js';
 
 const googleClient = config.googleClientId ? new OAuth2Client(config.googleClientId) : null;
 
@@ -183,6 +185,8 @@ const handView = (h, uid) => ({
   showdown: h.showdown,
   log: h.log,
   actions: h.actions || [],
+  rabbit: h.rabbit || [],
+  rabbitBy: h.rabbitBy || '',
   players: h.players.map((p) => ({
     uid: p.uid,
     name: p.name,
@@ -195,6 +199,45 @@ const handView = (h, uid) => ({
     folded: p.folded,
     hand: p.hand,
   })),
+});
+
+// Extras for replaying one hand, worked out from what this viewer is allowed to see.
+// Odds are only given for a street when every player still in the hand at that point has
+// cards this viewer can see (their own, or ones turned over at the table), so a figure
+// never hints at a hidden hand.
+const STREET_BOARD = { preflop: 0, flop: 3, turn: 4, river: 5 };
+function handExtras(view) {
+  const known = Object.fromEntries(view.players.filter((p) => p.cards.length === 2 && p.cards.every(Boolean)).map((p) => [p.seat, p.cards]));
+  // The street on which each player folded, if they did.
+  const order = ['preflop', 'flop', 'turn', 'river', 'result'];
+  const foldedAt = {};
+  for (const a of view.actions) if (a.t === 'fold' && foldedAt[a.seat] == null) foldedAt[a.seat] = order.indexOf(a.st);
+  const odds = {};
+  for (const street of ['preflop', 'flop', 'turn']) {
+    const count = STREET_BOARD[street];
+    if (view.board.length < count) break;
+    const si = order.indexOf(street);
+    // Still in when this street's cards are out: did not fold on an earlier street.
+    const live = view.players.filter((p) => foldedAt[p.seat] == null || foldedAt[p.seat] >= si);
+    if (live.length < 2 || live.some((p) => !known[p.seat])) continue;
+    const pct = equityMulti(live.map((p) => known[p.seat]), view.board.slice(0, count));
+    odds[count] = Object.fromEntries(live.map((p, i) => [p.seat, pct[i]]));
+  }
+  // Each shown hand's best five cards, for lighting up the winning combination.
+  const best = {};
+  if (view.board.length === 5) {
+    for (const p of view.players) if (known[p.seat] && !p.folded) best[p.seat] = bestHand([...known[p.seat], ...view.board]).cards;
+  }
+  return { odds, best };
+}
+
+router.get('/hand/:id', requireUser, async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Hand not found' });
+  const uid = req.user._id.toString();
+  const h = await Hand.findOne({ _id: req.params.id, uids: uid }).lean();
+  if (!h) return res.status(404).json({ error: 'Hand not found' });
+  const view = handView(h, uid);
+  res.json({ hand: view, ...handExtras(view) });
 });
 
 router.get('/hands', requireUser, async (req, res) => {
