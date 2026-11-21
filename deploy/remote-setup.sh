@@ -42,8 +42,14 @@ OLD_SECRET=$(grep -s '^JWT_SECRET=' "$ENV_FILE" || true)
 cp "$APP/server/.env.production" "$ENV_FILE"
 rm -f "$APP/server/.env.production"
 if ! grep -q '^JWT_SECRET=' "$ENV_FILE"; then
+  # Start on a fresh line even if the settings file has no final line break,
+  # otherwise the secret would be glued onto the end of the last setting.
+  [ -n "$(tail -c1 "$ENV_FILE")" ] && echo >> "$ENV_FILE"
   echo "${OLD_SECRET:-JWT_SECRET=$(openssl rand -hex 32)}" >> "$ENV_FILE"
 fi
+# The server refuses to start without these, so stop here with a clear message instead.
+grep -Eq '^JWT_SECRET=.{32,}$' "$ENV_FILE" || { echo "JWT_SECRET is missing or malformed in $ENV_FILE" >&2; exit 1; }
+grep -q '^MONGO_URI=.' "$ENV_FILE" || { echo "MONGO_URI is missing in $ENV_FILE" >&2; exit 1; }
 chown root:pitchduel "$ENV_FILE"
 chmod 640 "$ENV_FILE"
 
@@ -95,7 +101,10 @@ if ! grep -qs 'managed by Certbot' "$CONF"; then
   fi
 fi
 
-sleep 2
-systemctl is-active pitch-duel
+for i in $(seq 1 20); do
+  curl -fsS http://127.0.0.1:4000/api/config >/dev/null 2>&1 && break
+  sleep 1
+done
+systemctl is-active pitch-duel || { echo "The game server did not start. Last log lines:" >&2; journalctl -u pitch-duel -n 15 --no-pager >&2; exit 1; }
 curl -fsS http://127.0.0.1:4000/api/config && echo
 echo "Deployed. Open: https://$DOMAIN"

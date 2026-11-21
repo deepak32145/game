@@ -1,5 +1,22 @@
+# Dependencies and build output
 node_modules/
 dist/
+
+# Secrets: every env file except the example template
 .env
-.env.production
+.env.*
+!.env.example
+
+# Keys and certificates
 *.pem
+*.ppk
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Logs and OS clutter
+*.log
+.DS_Store
+Thumbs.db
