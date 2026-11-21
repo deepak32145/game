@@ -144,6 +144,34 @@ export function createManager(io) {
     return { ok: true };
   }
 
+  // ---- throwables: a seated player throws something at another seated player, everyone at the table sees it ----
+  const THROWABLES = new Set(['bomb', 'egg', 'tomato', 'slap', 'slipper', 'punch', 'poop', 'cake', 'fish', 'ice', 'fire', 'beer', 'money', 'rose', 'kiss', 'crown']);
+  const THROW_GAP_MS = 1500; // between two throws by the same player
+  const THROW_BURST = 8; // at most this many throws ...
+  const THROW_WINDOW_MS = 30000; // ... in this long
+  const throwTimes = new Map(); // user id -> when they last threw
+  let throwSeq = 0;
+
+  function throwAt(uid, { tableId, to, item }) {
+    const table = tables.get(tableId);
+    const from = table?.seatOf(uid);
+    if (!from) return fail('Take a seat to throw things');
+    if (!THROWABLES.has(item)) return fail('Pick something to throw');
+    const target = Number.isInteger(to) ? table.seats[to] : null;
+    if (!target) return fail('Nobody is sitting there');
+    if (target.uid === uid) return fail('You cannot throw at yourself');
+    const now = Date.now();
+    const recent = (throwTimes.get(uid) || []).filter((at) => now - at < THROW_WINDOW_MS);
+    if (recent.length && now - recent[recent.length - 1] < THROW_GAP_MS) return fail('Easy, one at a time');
+    if (recent.length >= THROW_BURST) return fail('Out of ammo for a few seconds');
+    recent.push(now);
+    throwTimes.set(uid, recent);
+    const shot = { id: ++throwSeq, from: from.seat, to: target.seat, item, by: from.name, at: target.name };
+    for (const q of table.seated) io.to(room(q.uid)).emit('table:throw', { tableId, shot });
+    io.to(watchRoom(tableId)).emit('table:throw', { tableId, shot });
+    return { ok: true };
+  }
+
   // Anyone at the table, playing or watching, can read what was said.
   function chatHistory(socket, { tableId }) {
     const table = tables.get(tableId);
@@ -536,7 +564,7 @@ export function createManager(io) {
   };
 
   return {
-    connected, disconnected, watch, closeView, lobbyState, emitMe, kick, chatSend, chatHistory,
+    connected, disconnected, watch, closeView, lobbyState, emitMe, kick, chatSend, chatHistory, throwAt,
     cashSit, cashTopUp, standUp, sngRegister, sngUnregister,
     act: (uid, { tableId, ...action }) => tableOf(uid, tableId)?.act(uid, action),
     show: (uid, { tableId, which }) => tableOf(uid, tableId)?.show(uid, which),

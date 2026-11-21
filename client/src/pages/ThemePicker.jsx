@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { THEMES, setTableTheme, setTableFx } from '../tableTheme.js';
+import { THEMES, setTableTheme, setTableFx, setShowThrows, useShowThrows } from '../tableTheme.js';
 import { FeltFx } from './TableFx.jsx';
 
 // Choose how the table looks. The change shows straight away; the picker stays open to compare.
 export default function ThemePicker({ current, fx, onClose }) {
+  const showThrows = useShowThrows();
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -39,6 +40,14 @@ export default function ThemePicker({ current, fx, onClose }) {
             <span className="muted small">Turn off to save battery or if motion distracts you</span>
           </span>
           <input type="checkbox" checked={fx} onChange={(e) => setTableFx(e.target.checked)} />
+        </label>
+        <label className="tp-anim">
+          <span>
+            <b>Throwables</b>
+            <br />
+            <span className="muted small">Eggs, bombs and slaps players throw at each other</span>
+          </span>
+          <input type="checkbox" checked={showThrows} onChange={(e) => setShowThrows(e.target.checked)} />
         </label>
       </div>
     </div>

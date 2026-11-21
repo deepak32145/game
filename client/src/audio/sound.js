@@ -91,6 +91,75 @@ function chipClicks(count, delay = 0, gain = 1) {
   }
 }
 
+// ---- throwables --------------------------------------------------------------
+
+// A pitch sweep, for whooshes, zaps and boings.
+function sweep({ from, to, peak, decay, type = 'sine', delay = 0 }) {
+  if (!ctx) return;
+  const at = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  osc.type = type;
+  osc.frequency.setValueAtTime(from, at);
+  osc.frequency.exponentialRampToValueAtTime(to, at + decay);
+  osc.connect(envelope(peak, 0.004, decay, at));
+  osc.start(at);
+  osc.stop(at + decay + 0.05);
+}
+
+export const throwSfx = {
+  launch() {
+    swish(0, { freq: 900, q: 0.8, peak: 0.12, attack: 0.08, decay: 0.22 });
+  },
+  hit(kind) {
+    switch (kind) {
+      case 'boom':
+        swish(0, { freq: 120, q: 0.4, peak: 0.7, attack: 0.005, decay: 0.9 });
+        sweep({ from: 160, to: 38, peak: 0.6, decay: 0.7 });
+        swish(0.02, { freq: 2200, q: 0.5, peak: 0.25, decay: 0.3 });
+        break;
+      case 'splat':
+        swish(0, { freq: 700, q: 0.7, peak: 0.45, attack: 0.004, decay: 0.16 });
+        sweep({ from: 300, to: 90, peak: 0.25, decay: 0.12 });
+        swish(0.08, { freq: 1600, q: 1.5, peak: 0.12, decay: 0.12 });
+        break;
+      case 'slap':
+        swish(0, { freq: 3000, q: 0.6, peak: 0.7, attack: 0.002, decay: 0.07 });
+        tone({ freq: 220, peak: 0.25, decay: 0.08, type: 'triangle' });
+        break;
+      case 'thwack':
+        swish(0, { freq: 1500, q: 0.9, peak: 0.6, attack: 0.002, decay: 0.09 });
+        sweep({ from: 900, to: 1800, peak: 0.12, decay: 0.25, type: 'triangle', delay: 0.08 });
+        break;
+      case 'flop':
+        swish(0, { freq: 1100, q: 1, peak: 0.4, decay: 0.08 });
+        swish(0.16, { freq: 1000, q: 1, peak: 0.3, decay: 0.07 });
+        sweep({ from: 500, to: 260, peak: 0.15, decay: 0.2, delay: 0.05 });
+        break;
+      case 'freeze':
+        [1760, 2349, 2637, 3136].forEach((f, i) => tone({ freq: f, peak: 0.08, decay: 0.5, type: 'sine', delay: i * 0.05 }));
+        swish(0, { freq: 6000, q: 0.6, peak: 0.12, attack: 0.05, decay: 0.5 });
+        break;
+      case 'burn':
+        swish(0, { freq: 500, q: 0.4, peak: 0.4, attack: 0.08, decay: 0.7 });
+        for (let i = 0; i < 6; i++) swish(0.1 + i * 0.09 + Math.random() * 0.05, { freq: 4000, q: 2, peak: 0.08, decay: 0.02 });
+        break;
+      case 'cash':
+        chipClicks(10, 0, 1);
+        [1319, 1568].forEach((f, i) => tone({ freq: f, peak: 0.12, decay: 0.25, delay: 0.1 + i * 0.1 }));
+        break;
+      case 'sparkle':
+        [1047, 1319, 1568, 2093].forEach((f, i) => tone({ freq: f, peak: 0.1, decay: 0.35, type: 'sine', delay: i * 0.07 }));
+        break;
+      case 'smack':
+        sweep({ from: 1200, to: 500, peak: 0.25, decay: 0.08 });
+        swish(0.02, { freq: 2500, q: 1.5, peak: 0.2, decay: 0.05 });
+        break;
+      default:
+        tone({ freq: 300, peak: 0.2, decay: 0.1 });
+    }
+  },
+};
+
 export const pokerSfx = {
   shuffle() {
     for (let i = 0; i < 9; i++) swish(i * 0.055, { freq: 2600 + i * 180, q: 0.9, peak: 0.16, decay: 0.045 });

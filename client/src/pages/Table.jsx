@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Avatar, money } from '../ui.jsx';
 import { sfx, pokerSfx } from '../audio/sound.js';
-import { useTableTheme, useTableFx } from '../tableTheme.js';
+import { useTableTheme, useTableFx, useShowThrows } from '../tableTheme.js';
 import { SceneFx, FeltFx } from './TableFx.jsx';
+import { ThrowMenu, playThrow, THROW_COOLDOWN_MS } from './Throwables.jsx';
 import ThemePicker from './ThemePicker.jsx';
 
 // The poker table: up to six seats around the felt, for players and spectators alike.
@@ -278,6 +279,31 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
     return () => clearInterval(t);
   }, [turnKey]);
 
+  // ---- throwables ----
+  const showThrows = useShowThrows();
+  const [throwAt, setThrowAt] = useState(null); // { seat, name, rect } while the throw menu is open
+  const throwLayer = useRef(null);
+  useEffect(() => {
+    const onThrow = ({ tableId, shot }) => {
+      if (tableId !== view.id || !showThrows || document.hidden) return;
+      try {
+        playThrow(throwLayer.current, shot);
+      } catch (err) {
+        console.error('throw animation failed', err);
+      }
+    };
+    socket.on('table:throw', onThrow);
+    return () => socket.off('table:throw', onThrow);
+  }, [socket, view.id, showThrows]);
+  const throwReadyAt = useRef(0); // the next throw is allowed from this time (the server enforces it too)
+  const sendThrow = (item, done) => {
+    throwReadyAt.current = Date.now() + THROW_COOLDOWN_MS;
+    socket.emit('table:throw', { tableId: view.id, to: throwAt.seat, item }, (r) => {
+      if (!r?.ok) throwReadyAt.current = 0;
+      done(r);
+    });
+  };
+
   // ---- chat ----
   const [chatOpen, setChatOpen] = useState(false);
   const [draft, setDraft] = useState('');
@@ -470,7 +496,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
                 const handName = result?.hands ? result.hands[p.uid] : isMe && !revealing ? view.myHand : null;
                 const shownCards = result?.shown?.uid === p.uid ? result.shown.cards : null;
                 return (
-                  <div key={seat} className={`st pos-${pos} ${isMe ? 'me' : ''} ${acting ? 'acting' : ''} ${won ? 'won' : ''} ${folded || !p.inHand ? 'out' : ''}`}>
+                  <div key={seat} data-seat={seat} className={`st pos-${pos} ${isMe ? 'me' : ''} ${acting ? 'acting' : ''} ${won ? 'won' : ''} ${folded || !p.inHand ? 'out' : ''}`}>
                     {cards && (
                       <div className="st-cards" key={view.handNo}>
                         {cards.map((c, i) => (
@@ -489,7 +515,16 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
                       </div>
                     )}
                     <div className="st-plate">
-                      <div className="st-face">
+                      <div
+                        className={`st-face ${isMe ? '' : 'throwable'}`}
+                        {...(isMe ? {} : {
+                          role: 'button',
+                          tabIndex: 0,
+                          title: `Throw something at ${p.name}`,
+                          onClick: (e) => { sfx.unlock(); setThrowAt({ seat, name: p.name, rect: e.currentTarget.getBoundingClientRect() }); },
+                          onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setThrowAt({ seat, name: p.name, rect: e.currentTarget.getBoundingClientRect() }); } },
+                        })}
+                      >
                         <Avatar user={p} size={34} />
                         {acting && view.deadlineIn != null && <TimerRing key={`${view.handNo}-${view.street}-${view.pot}-${seat}`} ms={view.deadlineIn} />}
                         {view.button === seat && view.handNo > 0 && <span className="pk-button" title="Dealer button">D</span>}
@@ -709,6 +744,10 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
         )}
 
         {buyIn && <BuyIn view={view} me={me} seat={buyIn.seat} topUp={buyIn.topUp} socket={socket} onClose={() => setBuyIn(null)} />}
+        <div className="tw-layer" ref={throwLayer} aria-hidden="true" />
+        {throwAt && view.seats[throwAt.seat] && (
+          <ThrowMenu target={throwAt} canThrow={seated && !finished} readyAt={throwReadyAt.current} onThrow={sendThrow} onClose={() => setThrowAt(null)} />
+        )}
         {picking && <ThemePicker current={theme} fx={fx} onClose={() => setPicking(false)} />}
       </div>
     </Unit.Provider>

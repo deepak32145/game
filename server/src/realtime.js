@@ -52,6 +52,7 @@ export function setupRealtime(io) {
 
     on('chat:send', (p) => manager.chatSend(uid, p));
     on('chat:history', (p) => manager.chatHistory(socket, p));
+    on('table:throw', (p) => manager.throwAt(uid, p));
 
     socket.on('disconnect', () => manager.disconnected(socket));
   });

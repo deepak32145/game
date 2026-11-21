@@ -64,6 +64,34 @@ export function useTableFx() {
   return on;
 }
 
+// Throwables from other players shown or hidden (shown unless the player hid them).
+const THROWS_KEY = 'pitch_duel_show_throws';
+const THROWS_EVENT = 'pitch-duel-show-throws';
+function loadThrows() {
+  try {
+    return localStorage.getItem(THROWS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+export function setShowThrows(on) {
+  try {
+    localStorage.setItem(THROWS_KEY, on ? 'on' : 'off');
+  } catch {
+    // Storage blocked: applies until the page is reloaded.
+  }
+  window.dispatchEvent(new CustomEvent(THROWS_EVENT, { detail: on }));
+}
+export function useShowThrows() {
+  const [on, setOn] = useState(loadThrows);
+  useEffect(() => {
+    const onChange = (e) => setOn(e.detail);
+    window.addEventListener(THROWS_EVENT, onChange);
+    return () => window.removeEventListener(THROWS_EVENT, onChange);
+  }, []);
+  return on;
+}
+
 // The current theme, kept in step across every open table.
 export function useTableTheme() {
   const [theme, setTheme] = useState(load);
