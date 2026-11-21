@@ -251,6 +251,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
           pokerSfx.deal(4, 0.9);
         } else if (e.type === 'flop') [0, 0.1, 0.2].forEach((d) => pokerSfx.flip(d));
         else if (['turn', 'river', 'showdown', 'show'].includes(e.type)) pokerSfx.flip();
+        else if (e.type === 'rabbit') [0, 0.14, 0.28].forEach((d) => pokerSfx.flip(d));
         else if (e.type === 'allin') pokerSfx.allIn();
         else if (e.type === 'blinds') pokerSfx.blindsUp();
         else if (e.type === 'sit') pokerSfx.deal(1);
@@ -404,6 +405,10 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
   const posOf = (seat) => (seat - turn + max) % max;
   const inHandLive = seated && mySeat.inHand && !mySeat.folded && !hr;
   const canShow = !!hr && !hr.showdown && seated && hr.winners[0] === me.id;
+  // Rabbit hunt: the hand ended before the river without a showdown, and nobody has asked yet.
+  const rabbit = hr?.rabbit || null;
+  const canRabbit = !!hr && !hr.showdown && !rabbit && seated && view.phase === 'between' && view.board.length < 5;
+  const huntRabbit = () => socket.emit('poker:rabbit', { tableId });
   const info = view.info || {};
   const canTakeSeat = isCash && !seated && canJoin;
   const lastResult = info.results?.length ? [...info.results].sort((a, b) => a.place - b.place) : null;
@@ -581,14 +586,18 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
               )}
 
               <div className="pk-middle">
-                <div className="pk-board">
+                <div className={`pk-board ${rabbit ? 'has-rabbit' : ''}`}>
                   {[0, 1, 2, 3, 4].map((i) =>
                     i < boardCount && view.board[i] ? (
                       <Card key={`${view.handNo}-${i}`} card={view.board[i]} mark={`flip ${mark(view.board[i])}`} style={{ animationDelay: `${i < 3 ? i * 110 : 0}ms` }} />
+                    ) : rabbit && rabbit.cards[i - rabbit.from] ? (
+                      // What would have come: shown apart from the real board.
+                      <Card key={`${view.handNo}-r${i}`} card={rabbit.cards[i - rabbit.from]} mark="flip rabbit" style={{ animationDelay: `${(i - rabbit.from) * 140}ms` }} />
                     ) : (
                       <div key={i} className="pk-card slot" />
                     )
                   )}
+                  {rabbit && <span className="pk-rabbit-tag">🐇 {rabbit.uid === me.id ? 'You' : rabbit.by} rabbit-hunted</span>}
                 </div>
                 <div className="pk-pot">
                   {revealing && <span className="pk-allin">ALL-IN</span>}
@@ -683,6 +692,11 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
                       {hr.shown && hr.shown.uid !== me.id ? `shows ${hr.shown.cards.filter(Boolean).length === 2 ? 'both cards' : 'a card'}` : 'Next hand coming up…'}
                     </small>
                   </div>
+                  {canRabbit && (
+                    <button className="btn pk-rabbit-btn" onClick={huntRabbit} title="See the board cards that would have come">
+                      🐇 Rabbit hunt
+                    </button>
+                  )}
                   {canShow && mySeat.cards && (
                     <div className="pk-show">
                       <span>Show:</span>

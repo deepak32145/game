@@ -12,6 +12,7 @@ const AWAY_MS = 3000; // time given to a disconnected or timed-out player before
 const SHOWDOWN_MS = 6500;
 const FOLD_MS = 4500; // pause after a fold, long enough for the winner to choose to show
 const SHOWN_MS = 3000;
+const RABBIT_MS = 3500; // how long the rabbit cards stay up before the next hand
 const START_MS = 2500; // pause before the first hand once two players are ready
 const RUNOUT_STEP_MS = 500; // must match the client: gap between flop, turn and river of an all-in
 
@@ -544,6 +545,25 @@ export class Table {
     this.say(`${p.name} shows ${cards.filter(Boolean).join(' ')}.`);
     this.setTimer(SHOWN_MS, this.afterHand);
     this.changed();
+  }
+
+  // Rabbit hunt: after a hand ends before the river with no showdown, any seated player may reveal
+  // the board cards that would have come. They are the real next cards of this hand's deck, which is
+  // thrown away when the next hand starts, so nothing about a future hand is given away. Once per hand.
+  rabbit(uid) {
+    const hr = this.handResult;
+    const p = this.seatOf(uid);
+    if (this.phase !== 'between' || !hr || hr.showdown || hr.rabbit || !p || !this.deck) return { ok: false, error: 'Nothing to rabbit hunt' };
+    const missing = 5 - this.board.length;
+    if (missing <= 0) return { ok: false, error: 'The whole board is already out' };
+    const cards = this.deck.slice(-missing).reverse(); // the order they would have been dealt in
+    hr.rabbit = { cards, from: this.board.length, by: p.name, uid };
+    this.note('rabbit', uid);
+    this.say(`${p.name} rabbit-hunts: ${cards.join(' ')}.`);
+    // Leave everyone a moment to look before the next hand.
+    if (this.deadline - Date.now() < RABBIT_MS) this.setTimer(RABBIT_MS, this.afterHand);
+    this.changed();
+    return { ok: true };
   }
 
   finishHand(ms) {

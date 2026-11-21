@@ -595,6 +595,7 @@ export function createManager(io) {
     cashSit, cashTopUp, standUp, sngRegister, sngUnregister,
     act: (uid, { tableId, ...action }) => tableOf(uid, tableId)?.act(uid, action),
     show: (uid, { tableId, which }) => tableOf(uid, tableId)?.show(uid, which),
+    rabbit: (uid, { tableId }) => tableOf(uid, tableId)?.rabbit(uid) || { ok: false, error: 'Take a seat to rabbit hunt' },
     sitOut: (uid, { tableId, on }) => tableOf(uid, tableId)?.setSittingOut(uid, !!on),
     summary: () => ({
       online: online.size,
