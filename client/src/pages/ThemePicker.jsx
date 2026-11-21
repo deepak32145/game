@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { THEMES, setTableTheme } from '../tableTheme.js';
+import { THEMES, setTableTheme, setTableFx } from '../tableTheme.js';
+import { FeltFx } from './TableFx.jsx';
 
 // Choose how the table looks. The change shows straight away; the picker stays open to compare.
-export default function ThemePicker({ current, onClose }) {
+export default function ThemePicker({ current, fx, onClose }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -25,12 +26,20 @@ export default function ThemePicker({ current, onClose }) {
               onClick={() => setTableTheme(t.id)}
               aria-pressed={current === t.id}
             >
-              <span className={`tp-swatch theme-${t.id}`}><i /><b /></span>
+              <span className={`tp-swatch theme-${t.id} ${fx ? '' : 'fx-off'}`}><i><FeltFx /></i><b /></span>
               {t.name}
               <small>{t.note}</small>
             </button>
           ))}
         </div>
+        <label className="tp-anim">
+          <span>
+            <b>Animated scenery</b>
+            <br />
+            <span className="muted small">Turn off to save battery or if motion distracts you</span>
+          </span>
+          <input type="checkbox" checked={fx} onChange={(e) => setTableFx(e.target.checked)} />
+        </label>
       </div>
     </div>
   );

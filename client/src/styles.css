@@ -1666,6 +1666,14 @@ body {
 
 /* ================= Table themes ================= */
 /* Each theme only sets colours; the table, the picker swatches and the card backs read them. */
+/* Every theme starts from a full set, so a preview never inherits the colours of the table around it. */
+.theme-classic, .theme-royal, .theme-crimson, .theme-neon, .theme-galaxy, .theme-gold, .theme-ocean {
+  --felt-a: #17806a; --felt-b: #0f5a4c; --felt-c: #07302a;
+  --felt-extra: linear-gradient(transparent, transparent);
+  --rail: linear-gradient(160deg, #5a4630 0%, #2c2117 38%, #15100b 100%);
+  --edge: rgba(245, 197, 66, 0.55); --edge-glow: 0 0 0 transparent; --glow: rgba(46, 160, 130, 0.22);
+  --back-a: #b3233a; --back-b: #5a0c18; --back-ink: #f4d778; --back-line: rgba(244, 215, 120, 0.55);
+}
 .theme-royal {
   --felt-a: #2f6fd6; --felt-b: #1a4596; --felt-c: #0a1f4d;
   --rail: linear-gradient(160deg, #4a3a2a 0%, #24190f 40%, #0f0a06 100%);
@@ -1751,3 +1759,268 @@ body {
 @media (min-width: 901px) {
   .pk-menu-theme { display: none; } /* on a wide screen it is in the header */
 }
+
+/* ================= Animated table themes ================= */
+/* Only transform and opacity are animated where possible, so phones can run it on the GPU. */
+@property --fx-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes fx-spin { to { --fx-a: 360deg; } }
+
+.pk-page { position: relative; isolation: isolate; }
+.pk-table { position: relative; }
+.fx { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.fx i { position: absolute; display: block; font-style: normal; }
+
+/* ---- felt light: one layer inside the felt (and inside the picker previews) ---- */
+.fx-felt { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: 0; }
+.fx-felt::before, .fx-felt::after { content: ''; position: absolute; pointer-events: none; }
+.tp-swatch i { position: relative; overflow: hidden; }
+
+/* Emerald: a soft table light breathing */
+.theme-classic .fx-felt::before { inset: -20%; background: radial-gradient(ellipse at 50% 45%, rgba(255, 255, 255, 0.10), transparent 55%); animation: fx-breathe 6s ease-in-out infinite; }
+@keyframes fx-breathe { 50% { opacity: 0.35; transform: scale(1.08); } }
+
+/* Royal Blue: a spotlight gliding across the felt */
+.theme-royal .fx-felt::before { top: -30%; bottom: -30%; left: 0; width: 45%; background: radial-gradient(ellipse at 50% 50%, rgba(150, 200, 255, 0.30), transparent 65%); animation: fx-glide 9s ease-in-out infinite alternate; }
+@keyframes fx-glide { from { transform: translateX(-30%); } to { transform: translateX(150%); } }
+
+/* Crimson and Gold: a sheen sweeping over the velvet */
+.theme-crimson .fx-felt::before, .theme-gold .fx-felt::before {
+  top: -10%; bottom: -10%; left: 0; width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255, 220, 220, 0.16), transparent);
+  animation: fx-sheen 7s ease-in-out infinite;
+}
+.theme-gold .fx-felt::before { background: linear-gradient(90deg, transparent, rgba(255, 215, 120, 0.22), transparent); animation-duration: 5s; }
+@keyframes fx-sheen { 0% { transform: translateX(-130%) skewX(-20deg); } 60%, 100% { transform: translateX(330%) skewX(-20deg); } }
+
+/* Midnight Neon: a ring of light pulsing around the betting line */
+.theme-neon .fx-felt::before { inset: 9% 7%; border-radius: 999px; border: 2px solid rgba(34, 230, 255, 0.55); box-shadow: 0 0 18px rgba(34, 230, 255, 0.5), inset 0 0 18px rgba(255, 47, 180, 0.35); animation: fx-pulse 2.6s ease-in-out infinite; }
+.theme-neon .fx-felt::after { inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(34, 230, 255, 0.10) 50%, transparent 55%); animation: fx-scan 5s linear infinite; }
+@keyframes fx-pulse { 50% { opacity: 0.25; transform: scale(0.985); } }
+@keyframes fx-scan { from { transform: translateY(-60%); } to { transform: translateY(60%); } }
+
+/* Purple Galaxy: a nebula turning slowly under twinkling stars */
+.theme-galaxy .fx-felt::before {
+  inset: -40%;
+  background:
+    radial-gradient(ellipse 30% 22% at 35% 40%, rgba(255, 110, 210, 0.38), transparent 70%),
+    radial-gradient(ellipse 28% 20% at 65% 60%, rgba(90, 160, 255, 0.34), transparent 70%),
+    radial-gradient(ellipse 18% 14% at 55% 35%, rgba(255, 255, 255, 0.14), transparent 70%);
+  animation: fx-turn 40s linear infinite;
+}
+.theme-galaxy .fx-felt::after {
+  inset: 0;
+  background-image:
+    radial-gradient(1.5px 1.5px at 20px 30px, #fff, transparent),
+    radial-gradient(1px 1px at 90px 70px, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 140px 20px, #fde7ff, transparent),
+    radial-gradient(1px 1px at 60px 110px, #fff, transparent);
+  background-size: 170px 130px;
+  animation: fx-twinkle 3s ease-in-out infinite;
+}
+@keyframes fx-turn { to { transform: rotate(360deg); } }
+@keyframes fx-twinkle { 50% { opacity: 0.3; } }
+
+/* Ocean: light rippling over the water */
+.theme-ocean .fx-felt::before, .theme-ocean .fx-felt::after {
+  inset: -60px;
+  background-image:
+    radial-gradient(ellipse 50px 16px at 40px 30px, rgba(200, 255, 255, 0.16), transparent 70%),
+    radial-gradient(ellipse 30px 40px at 100px 80px, rgba(200, 255, 255, 0.12), transparent 70%);
+  background-size: 140px 110px;
+  filter: blur(5px);
+  animation: fx-drift-a 9s linear infinite;
+}
+.theme-ocean .fx-felt::after { background-size: 150px 120px; opacity: 0.8; animation: fx-drift-b 13s linear infinite; }
+@keyframes fx-drift-a { to { transform: translate(120px, 100px); } }
+@keyframes fx-drift-b { to { transform: translate(-150px, 120px); } }
+
+/* ---- the rail ---- */
+/* Neon: a light running round the rail, and a glow under it */
+.theme-neon .pk-table::before, .theme-galaxy .pk-table::before {
+  content: ''; position: absolute; inset: -4px; border-radius: inherit; z-index: -1; pointer-events: none;
+  background: conic-gradient(from var(--fx-a), #22e6ff, #ff2fb4, #7c3aed, #22e6ff);
+  filter: blur(14px); opacity: 0.75;
+  animation: fx-spin 6s linear infinite;
+}
+.theme-galaxy .pk-table::before { background: conic-gradient(from var(--fx-a), #a855f7, #ec4899, #6366f1, #a855f7); opacity: 0.55; animation-duration: 12s; }
+.theme-neon .pk-table::after, .theme-gold .pk-table::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; padding: 3px;
+  background: conic-gradient(from var(--fx-a), #22e6ff, #ff2fb4 25%, transparent 40%, #22e6ff 60%, #ff2fb4 85%, #22e6ff);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: fx-spin 4s linear infinite;
+}
+/* Gold: a glint travelling round the gold rail */
+.theme-gold .pk-table::after {
+  padding: clamp(9px, 1.9vh, 18px);
+  background: conic-gradient(from var(--fx-a), transparent 0deg, rgba(255, 250, 225, 0.85) 18deg, transparent 40deg, transparent 180deg, rgba(255, 250, 225, 0.6) 198deg, transparent 220deg);
+  mix-blend-mode: overlay;
+  animation-duration: 7s;
+}
+
+/* ---- background scenes ---- */
+/* Emerald: card suits floating up through a casino glow */
+.fx-classic .fx-spot { position: absolute; inset: -20%; background: radial-gradient(ellipse 50% 40% at 50% 40%, rgba(46, 200, 150, 0.18), transparent 70%); animation: fx-breathe 8s ease-in-out infinite; }
+.fx-suit { bottom: -60px; font-size: var(--s); color: rgba(255, 255, 255, 0.07); animation: fx-rise-spin linear infinite; }
+.fx-suit:nth-child(4n + 3), .fx-suit:nth-child(4n + 4) { color: rgba(255, 90, 110, 0.09); }
+@keyframes fx-rise-spin { from { transform: translateY(0) rotate(0deg); } to { transform: translateY(-120vh) rotate(260deg); } }
+
+/* Royal Blue: an aurora drifting over the room */
+.fx-aurora { position: absolute; left: -30%; width: 160%; height: 38%; border-radius: 50%; filter: blur(40px); opacity: 0.55; mix-blend-mode: screen; }
+.fx-aurora.a { top: -8%; background: linear-gradient(90deg, transparent, #1e6bff, #22d3ee, #7c3aed, transparent); animation: fx-aurora 14s ease-in-out infinite alternate; }
+.fx-aurora.b { top: 18%; background: linear-gradient(90deg, transparent, #7c3aed, #3b82f6, #22d3ee, transparent); opacity: 0.35; animation: fx-aurora 19s ease-in-out -6s infinite alternate-reverse; }
+.fx-aurora.c { bottom: -12%; background: linear-gradient(90deg, transparent, #22d3ee, #2563eb, transparent); opacity: 0.4; animation: fx-aurora 23s ease-in-out -3s infinite alternate; }
+@keyframes fx-aurora { from { transform: translateX(-12%) skewY(-4deg) scaleY(0.8); } to { transform: translateX(12%) skewY(5deg) scaleY(1.2); } }
+
+/* Stars, used by the galaxy and, sparsely, the aurora */
+.fx-stars {
+  position: absolute; left: 0; right: 0; top: -200px; height: calc(100% + 200px);
+  background-image:
+    radial-gradient(1.5px 1.5px at 25px 35px, #fff, transparent),
+    radial-gradient(1px 1px at 120px 80px, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 170px 160px, #e9d5ff, transparent),
+    radial-gradient(1px 1px at 60px 140px, #fff, transparent),
+    radial-gradient(2px 2px at 190px 30px, #bfdbfe, transparent);
+  background-size: 200px 200px;
+  animation: fx-fall 60s linear infinite, fx-twinkle 4s ease-in-out infinite;
+}
+.fx-stars.s2 { background-size: 280px 200px; opacity: 0.7; animation-duration: 90s, 5.5s; }
+.fx-stars.s3 { background-size: 140px 200px; opacity: 0.45; animation-duration: 40s, 3s; }
+.fx-royal .fx-stars { opacity: 0.4; }
+@keyframes fx-fall { to { transform: translateY(200px); } }
+.fx-galaxy .fx-nebula {
+  position: absolute; inset: -40%;
+  background:
+    radial-gradient(ellipse 30% 22% at 30% 35%, rgba(236, 72, 153, 0.35), transparent 70%),
+    radial-gradient(ellipse 32% 24% at 70% 65%, rgba(99, 102, 241, 0.38), transparent 70%),
+    radial-gradient(ellipse 24% 18% at 60% 30%, rgba(168, 85, 247, 0.3), transparent 70%);
+  filter: blur(20px);
+  animation: fx-turn 120s linear infinite;
+}
+.fx-shoot { top: 10%; left: 80%; width: 140px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, #fff, rgba(255, 255, 255, 0)); opacity: 0; transform: rotate(-28deg); animation: fx-shoot 9s ease-in infinite; }
+.fx-shoot.b { top: 4%; left: 40%; animation-delay: 3.5s; animation-duration: 11s; }
+.fx-shoot.c { top: 30%; left: 95%; animation-delay: 6.5s; animation-duration: 13s; }
+@keyframes fx-shoot {
+  0% { opacity: 0; transform: rotate(-28deg) translateX(0); }
+  2% { opacity: 1; }
+  9% { opacity: 0; transform: rotate(-28deg) translateX(-520px); }
+  100% { opacity: 0; transform: rotate(-28deg) translateX(-520px); }
+}
+
+/* Black & Gold: light rays and drifting gold dust */
+.fx-gold .fx-rays {
+  position: absolute; left: -50%; right: -50%; top: -60%; height: 160%;
+  background: repeating-conic-gradient(from 0deg at 50% 0%, rgba(245, 197, 66, 0.14) 0deg 4deg, transparent 4deg 13deg);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 20%, transparent 70%);
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 20%, transparent 70%);
+  transform-origin: 50% 0%;
+  animation: fx-sway 16s ease-in-out infinite alternate;
+}
+@keyframes fx-sway { from { transform: rotate(-8deg); } to { transform: rotate(8deg); } }
+.fx-mote {
+  bottom: -20px; width: var(--s); height: var(--s); border-radius: 50%;
+  background: radial-gradient(circle, #fffbe8 0%, #ffd75e 40%, rgba(245, 197, 66, 0) 72%);
+  box-shadow: 0 0 14px 2px rgba(245, 197, 66, 0.75);
+  animation: fx-float linear infinite;
+}
+@keyframes fx-float {
+  0% { transform: translate(0, 0); opacity: 0; }
+  10% { opacity: 0.9; }
+  50% { transform: translate(30px, -55vh); }
+  90% { opacity: 0.7; }
+  100% { transform: translate(-20px, -115vh); opacity: 0; }
+}
+
+/* Ocean: sunlight through water, bubbles and rolling waves */
+.fx-ocean .fx-shafts {
+  position: absolute; left: -20%; right: -20%; top: -10%; height: 90%;
+  background: repeating-linear-gradient(100deg, transparent 0 60px, rgba(180, 255, 255, 0.07) 60px 110px, transparent 110px 170px);
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
+  mask-image: linear-gradient(to bottom, #000, transparent);
+  animation: fx-shafts 12s ease-in-out infinite alternate;
+}
+@keyframes fx-shafts { from { transform: translateX(-4%) skewX(-6deg); } to { transform: translateX(4%) skewX(6deg); } }
+.fx-bubble {
+  bottom: -30px; width: var(--s); height: var(--s); border-radius: 50%;
+  border: 1.5px solid rgba(200, 255, 255, 0.75);
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.8), rgba(150, 240, 255, 0.12) 50%);
+  box-shadow: 0 0 8px rgba(120, 230, 255, 0.4);
+  animation: fx-bubble linear infinite;
+}
+@keyframes fx-bubble {
+  0% { transform: translate(0, 0); opacity: 0; }
+  10% { opacity: 1; }
+  25% { transform: translate(12px, -28vh); }
+  50% { transform: translate(-10px, -56vh); }
+  75% { transform: translate(10px, -84vh); }
+  100% { transform: translate(0, -112vh); opacity: 0; }
+}
+.fx-wave {
+  position: absolute; left: 0; bottom: -4px; width: 200%; height: 90px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 60' preserveAspectRatio='none'%3E%3Cpath d='M0 30 Q30 10 60 30 T120 30 T180 30 T240 30 V60 H0Z' fill='%2313a3b5'/%3E%3C/svg%3E") repeat-x;
+  background-size: 480px 90px;
+  opacity: 0.35;
+  animation: fx-wave 10s linear infinite;
+}
+.fx-wave.back { bottom: 14px; height: 80px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 60' preserveAspectRatio='none'%3E%3Cpath d='M0 30 Q30 10 60 30 T120 30 T180 30 T240 30 V60 H0Z' fill='%2322d3ee'/%3E%3C/svg%3E"); background-size: 560px 80px; opacity: 0.2; animation-duration: 16s; animation-direction: reverse; }
+@keyframes fx-wave { to { transform: translateX(-50%); } }
+
+/* Crimson: embers rising out of the dark */
+.fx-crimson .fx-smoke {
+  position: absolute; left: -20%; right: -20%; bottom: -30%; height: 70%;
+  background:
+    radial-gradient(ellipse 40% 50% at 30% 70%, rgba(200, 30, 50, 0.55), transparent 70%),
+    radial-gradient(ellipse 35% 45% at 75% 75%, rgba(255, 100, 40, 0.35), transparent 70%);
+  filter: blur(30px);
+  animation: fx-smoke 10s ease-in-out infinite alternate;
+}
+@keyframes fx-smoke { from { transform: translateX(-5%) scale(1); } to { transform: translateX(5%) scale(1.15); } }
+.fx-ember {
+  bottom: -10px; width: var(--s); height: var(--s); border-radius: 50%;
+  background: #ffd08a; box-shadow: 0 0 8px 3px rgba(255, 110, 40, 0.95), 0 0 18px 6px rgba(255, 60, 30, 0.45);
+  animation: fx-ember linear infinite;
+}
+@keyframes fx-ember {
+  0% { transform: translate(0, 0) scale(1); opacity: 0; }
+  10% { opacity: 1; }
+  30% { transform: translate(18px, -30vh) scale(0.9); }
+  60% { transform: translate(-14px, -62vh) scale(0.7); opacity: 0.8; }
+  100% { transform: translate(10px, -100vh) scale(0.3); opacity: 0; }
+}
+
+/* Neon: a synthwave grid rolling towards you */
+.fx-neon .fx-glow { position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; filter: blur(60px); opacity: 0.35; animation: fx-breathe 7s ease-in-out infinite; }
+.fx-neon .fx-glow.a { left: -25vmax; top: -20vmax; background: #ff2fb4; }
+.fx-neon .fx-glow.b { right: -25vmax; bottom: -25vmax; background: #22e6ff; animation-delay: -3.5s; }
+.fx-floor {
+  position: absolute; left: -50%; width: 200%; bottom: 0; height: 45%; overflow: hidden;
+  transform: perspective(380px) rotateX(64deg); transform-origin: 50% 100%;
+  -webkit-mask-image: linear-gradient(to top, #000 25%, transparent 90%);
+  mask-image: linear-gradient(to top, #000 25%, transparent 90%);
+}
+.fx-floor.top { top: 0; bottom: auto; transform: perspective(380px) rotateX(-64deg); transform-origin: 50% 0%; opacity: 0.5;
+  -webkit-mask-image: linear-gradient(to bottom, #000 25%, transparent 90%); mask-image: linear-gradient(to bottom, #000 25%, transparent 90%); }
+.fx-grid {
+  position: absolute; left: 0; right: 0; top: -64px; bottom: 0;
+  background-image:
+    linear-gradient(to top, rgba(255, 47, 180, 0.6) 2px, transparent 2px),
+    linear-gradient(to right, rgba(34, 230, 255, 0.45) 2px, transparent 2px);
+  background-size: 64px 64px;
+  animation: fx-roll 1.4s linear infinite;
+}
+.fx-floor.top .fx-grid { top: 0; bottom: -64px; animation-direction: reverse; }
+@keyframes fx-roll { to { transform: translateY(64px); } }
+
+/* Switched off by the player, or by a device that asks for less motion */
+.fx-off .fx, .fx-off .fx-felt { display: none; }
+.fx-off .pk-table::before, .fx-off .pk-table::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .fx, .fx-felt { display: none; }
+  .pk-table::before, .pk-table::after { animation: none !important; }
+}
+
+/* The picker's animation switch */
+.tp-anim { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 12px; font-size: 0.86rem; cursor: pointer; }
+.tp-anim input { width: 40px; height: 22px; accent-color: var(--gold); cursor: pointer; }
+.tp-option .tp-live { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.5px; color: #1a1405; background: var(--gold); border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: middle; }

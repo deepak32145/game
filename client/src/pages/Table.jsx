@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Avatar, money } from '../ui.jsx';
 import { sfx, pokerSfx } from '../audio/sound.js';
-import { useTableTheme } from '../tableTheme.js';
+import { useTableTheme, useTableFx } from '../tableTheme.js';
+import { SceneFx, FeltFx } from './TableFx.jsx';
 import ThemePicker from './ThemePicker.jsx';
 
 // The poker table: up to six seats around the felt, for players and spectators alike.
@@ -147,6 +148,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
   const [muted, setMuted] = useState(sfx.isMuted());
   const [showMenu, setShowMenu] = useState(false);
   const theme = useTableTheme();
+  const fx = useTableFx();
   const [picking, setPicking] = useState(false); // the table theme picker is open
   const [buyIn, setBuyIn] = useState(null); // { seat } or { topUp: true }
 
@@ -391,7 +393,8 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
 
   return (
     <Unit.Provider value={unit}>
-      <div className={`pk-page theme-${theme}`}>
+      <div className={`pk-page theme-${theme} ${fx ? '' : 'fx-off'}`}>
+        <SceneFx theme={theme} />
         {nav}
         <header className="pk-top">
           {seated && isCash && !finished ? (
@@ -441,6 +444,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
             }}
           >
             <div className={`pk-felt ring seats-${max}`}>
+              <FeltFx />
               <div className="pk-watermark">PITCH DUEL</div>
 
               {view.seats.map((p, seat) => {
@@ -705,7 +709,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
         )}
 
         {buyIn && <BuyIn view={view} me={me} seat={buyIn.seat} topUp={buyIn.topUp} socket={socket} onClose={() => setBuyIn(null)} />}
-        {picking && <ThemePicker current={theme} onClose={() => setPicking(false)} />}
+        {picking && <ThemePicker current={theme} fx={fx} onClose={() => setPicking(false)} />}
       </div>
     </Unit.Provider>
   );

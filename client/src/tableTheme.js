@@ -4,17 +4,19 @@ import { useEffect, useState } from 'react';
 // and applies to every table the player has open.
 
 export const THEMES = [
-  { id: 'classic', name: 'Emerald', note: 'The classic green' },
-  { id: 'royal', name: 'Royal Blue', note: 'Blue felt, walnut rail' },
-  { id: 'crimson', name: 'Crimson Velvet', note: 'Red felt, black rail' },
-  { id: 'neon', name: 'Midnight Neon', note: 'Dark felt, neon glow' },
-  { id: 'galaxy', name: 'Purple Galaxy', note: 'Violet felt, starlight' },
-  { id: 'gold', name: 'Black & Gold', note: 'High-roller VIP' },
-  { id: 'ocean', name: 'Ocean', note: 'Teal felt, driftwood rail' },
+  { id: 'classic', name: 'Emerald', note: 'Floating suits, casino glow' },
+  { id: 'royal', name: 'Royal Blue', note: 'Aurora sky, spotlight' },
+  { id: 'crimson', name: 'Crimson Velvet', note: 'Rising embers, velvet sheen' },
+  { id: 'neon', name: 'Midnight Neon', note: 'Synthwave grid, neon rail' },
+  { id: 'galaxy', name: 'Purple Galaxy', note: 'Nebula, shooting stars' },
+  { id: 'gold', name: 'Black & Gold', note: 'Gold dust, light rays' },
+  { id: 'ocean', name: 'Ocean', note: 'Bubbles, waves, caustics' },
 ];
 
 const KEY = 'pitch_duel_table_theme';
 const EVENT = 'pitch-duel-table-theme';
+const FX_KEY = 'pitch_duel_table_fx';
+const FX_EVENT = 'pitch-duel-table-fx';
 
 function load() {
   try {
@@ -32,6 +34,34 @@ export function setTableTheme(id) {
     // Storage blocked: the choice still applies until the page is reloaded.
   }
   window.dispatchEvent(new CustomEvent(EVENT, { detail: id }));
+}
+
+// Animated scenery on or off (on unless the player turned it off).
+function loadFx() {
+  try {
+    return localStorage.getItem(FX_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function setTableFx(on) {
+  try {
+    localStorage.setItem(FX_KEY, on ? 'on' : 'off');
+  } catch {
+    // Storage blocked: applies until the page is reloaded.
+  }
+  window.dispatchEvent(new CustomEvent(FX_EVENT, { detail: on }));
+}
+
+export function useTableFx() {
+  const [on, setOn] = useState(loadFx);
+  useEffect(() => {
+    const onChange = (e) => setOn(e.detail);
+    window.addEventListener(FX_EVENT, onChange);
+    return () => window.removeEventListener(FX_EVENT, onChange);
+  }, []);
+  return on;
 }
 
 // The current theme, kept in step across every open table.
