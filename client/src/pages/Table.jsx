@@ -3,7 +3,7 @@ import { Avatar, money } from '../ui.jsx';
 import { sfx, pokerSfx } from '../audio/sound.js';
 import { useTableTheme, useTableFx, useShowThrows } from '../tableTheme.js';
 import { SceneFx, FeltFx } from './TableFx.jsx';
-import { ThrowMenu, playThrow, THROW_COOLDOWN_MS } from './Throwables.jsx';
+import { ThrowMenu, playThrow, THROW_COOLDOWN_MS, ReactionDock, playReaction } from './Throwables.jsx';
 import ThemePicker from './ThemePicker.jsx';
 
 // The poker table: up to six seats around the felt, for players and spectators alike.
@@ -295,6 +295,23 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
     socket.on('table:throw', onThrow);
     return () => socket.off('table:throw', onThrow);
   }, [socket, view.id, showThrows]);
+  // Board reactions from anyone at the table.
+  useEffect(() => {
+    const onReact = ({ tableId, r }) => {
+      if (tableId !== view.id || document.hidden) return;
+      try {
+        playReaction(throwLayer.current, r);
+      } catch (err) {
+        console.error('reaction failed', err);
+      }
+    };
+    socket.on('table:react', onReact);
+    return () => socket.off('table:react', onReact);
+  }, [socket, view.id]);
+  const sendReaction = (emote, done) => {
+    sfx.unlock();
+    socket.emit('table:react', { tableId: view.id, emote }, done);
+  };
   const throwReadyAt = useRef(0); // the next throw is allowed from this time (the server enforces it too)
   const sendThrow = (item, done) => {
     throwReadyAt.current = Date.now() + THROW_COOLDOWN_MS;
@@ -471,6 +488,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
           >
             <div className={`pk-felt ring seats-${max}`}>
               <FeltFx />
+              {!finished && <ReactionDock onReact={sendReaction} />}
               <div className="pk-watermark">PITCH DUEL</div>
 
               {view.seats.map((p, seat) => {

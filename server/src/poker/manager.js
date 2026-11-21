@@ -172,6 +172,33 @@ export function createManager(io) {
     return { ok: true };
   }
 
+  // ---- board reactions: anyone at the table, playing or watching, sends a quick emote ----
+  const REACTIONS = new Set(['laugh', 'wow', 'fire', 'clap', 'scream', 'money', 'cry', 'dead']);
+  const REACT_GAP_MS = 350;
+  const REACT_BURST = 12; // at most this many ...
+  const REACT_WINDOW_MS = 10000; // ... in this long
+  const reactTimes = new Map(); // user id -> recent reaction times
+  let reactSeq = 0;
+
+  function react(socket, { tableId, emote }) {
+    const uid = socket.data.uid;
+    const table = tables.get(tableId);
+    if (!table) return fail('That table is no longer running');
+    const seat = table.seatOf(uid);
+    if (!seat && !socket.data.watching.has(tableId)) return fail('Open the table first');
+    if (!REACTIONS.has(emote)) return fail('Pick a reaction');
+    const now = Date.now();
+    const recent = (reactTimes.get(uid) || []).filter((at) => now - at < REACT_WINDOW_MS);
+    if (recent.length && now - recent[recent.length - 1] < REACT_GAP_MS) return fail('Easy');
+    if (recent.length >= REACT_BURST) return fail('Give it a second');
+    recent.push(now);
+    reactTimes.set(uid, recent);
+    const r = { id: ++reactSeq, emote, seat: seat ? seat.seat : null };
+    for (const q of table.seated) io.to(room(q.uid)).emit('table:react', { tableId, r });
+    io.to(watchRoom(tableId)).emit('table:react', { tableId, r });
+    return { ok: true };
+  }
+
   // Anyone at the table, playing or watching, can read what was said.
   function chatHistory(socket, { tableId }) {
     const table = tables.get(tableId);
@@ -564,7 +591,7 @@ export function createManager(io) {
   };
 
   return {
-    connected, disconnected, watch, closeView, lobbyState, emitMe, kick, chatSend, chatHistory, throwAt,
+    connected, disconnected, watch, closeView, lobbyState, emitMe, kick, chatSend, chatHistory, throwAt, react,
     cashSit, cashTopUp, standUp, sngRegister, sngUnregister,
     act: (uid, { tableId, ...action }) => tableOf(uid, tableId)?.act(uid, action),
     show: (uid, { tableId, which }) => tableOf(uid, tableId)?.show(uid, which),

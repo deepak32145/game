@@ -107,6 +107,9 @@ function sweep({ from, to, peak, decay, type = 'sine', delay = 0 }) {
 }
 
 export const throwSfx = {
+  pop() {
+    sweep({ from: 500, to: 900, peak: 0.07, decay: 0.07 });
+  },
   launch() {
     swish(0, { freq: 900, q: 0.8, peak: 0.12, attack: 0.08, decay: 0.22 });
   },
@@ -149,6 +152,10 @@ export const throwSfx = {
         break;
       case 'sparkle':
         [1047, 1319, 1568, 2093].forEach((f, i) => tone({ freq: f, peak: 0.1, decay: 0.35, type: 'sine', delay: i * 0.07 }));
+        break;
+      case 'beer':
+        swish(0, { freq: 600, q: 0.5, peak: 0.5, attack: 0.004, decay: 0.3 });
+        for (let i = 0; i < 10; i++) swish(0.15 + i * 0.05 + Math.random() * 0.03, { freq: 5000 + Math.random() * 2000, q: 3, peak: 0.05, decay: 0.015 });
         break;
       case 'smack':
         sweep({ from: 1200, to: 500, peak: 0.25, decay: 0.08 });

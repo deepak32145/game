@@ -19,7 +19,7 @@ export const THROWABLES = [
   { id: 'fish', emoji: '🐟', name: 'Fish', flight: 'spin', hit: 'flop', sound: 'flop' },
   { id: 'ice', emoji: '🧊', name: 'Freeze', flight: 'spin', hit: 'freeze', sound: 'freeze' },
   { id: 'fire', emoji: '🔥', name: 'Fire', flight: 'straight', hit: 'burn', sound: 'burn' },
-  { id: 'beer', emoji: '🍺', name: 'Beer', flight: 'tumble', hit: 'splat', sound: 'splat', c: '#ffd76a', c2: '#fffaf0' },
+  { id: 'beer', emoji: '🍺', name: 'Beer', flight: 'tumble', hit: 'beer', sound: 'beer', word: 'SPLASH!' },
   { id: 'money', emoji: '💸', name: 'Make it rain', flight: 'float', hit: 'cash', sound: 'cash' },
   { id: 'rose', emoji: '🌹', name: 'Rose', flight: 'float', hit: 'petals', sound: 'sparkle' },
   { id: 'kiss', emoji: '💋', name: 'Kiss', flight: 'float', hit: 'kiss', sound: 'smack' },
@@ -106,6 +106,20 @@ function land(layer, page, shot, item, at) {
       for (let i = 0; i < 3; i++) spawn(layer, { x: at.x, y: at.y - r * 0.9, text: '⭐', cls: 'tw-dizzy', life: 1700, style: { 'animation-delay': `${-i * 0.33}s`, '--r': `${r * 1.1}px` } });
       shake(target, 8, 420);
       break;
+    case 'beer':
+      // Drenched: an amber splash with a foam head, beer running down and bubbles fizzing up.
+      spawn(layer, { x: at.x, y: at.y, cls: 'tw-beer', life: 3200, style: { '--r': `${r * 3}px` } });
+      spawn(layer, { x: at.x, y: at.y - r * 0.75, cls: 'tw-foam', life: 2600, style: { '--r': `${r * 2}px` } });
+      for (let i = 0; i < 5; i++) {
+        spawn(layer, { x: at.x + (i - 2) * r * 0.45, y: at.y + r * 0.4, cls: 'tw-drip', life: 2600, style: { 'animation-delay': `${0.15 + i * 0.1}s`, '--len': `${r * (1.6 + (i % 3) * 0.6)}px` } });
+      }
+      for (let i = 0; i < 7; i++) {
+        spawn(layer, { x: at.x + (Math.random() - 0.5) * r * 2, y: at.y + r * 0.3, cls: 'tw-fizz', life: 1800, style: { 'animation-delay': `${0.2 + Math.random() * 0.8}s`, '--s': `${4 + Math.random() * 5}px` } });
+      }
+      burst(layer, at, { count: 9, cls: 'tw-drop beer', spread: 70, life: 650, fall: 25 });
+      spawn(layer, { x: at.x, y: at.y - r * 1.5, text: item.word, cls: 'tw-word beer', life: 900 });
+      shake(target, 5, 320);
+      break;
     case 'flop':
       spawn(layer, { x: at.x, y: at.y, text: '🐟', cls: 'tw-flop', life: 1300 });
       burst(layer, at, { count: 8, cls: 'tw-drop water', spread: 50, life: 600, fall: 15 });
@@ -184,6 +198,94 @@ export function playThrow(layer, shot) {
     el.remove();
     land(layer, page, shot, item, centre(toEl));
   };
+}
+
+// ---- board reactions ------------------------------------------------------------
+
+// Quick one-tap emotes anyone at the table can send; they float up from the sender's seat.
+export const REACTIONS = [
+  { id: 'laugh', emoji: '😂' },
+  { id: 'wow', emoji: '😮' },
+  { id: 'fire', emoji: '🔥' },
+  { id: 'clap', emoji: '👏' },
+  { id: 'scream', emoji: '😱' },
+  { id: 'money', emoji: '🤑' },
+  { id: 'cry', emoji: '😭' },
+  { id: 'dead', emoji: '💀' },
+];
+const REACTION = Object.fromEntries(REACTIONS.map((r) => [r.id, r.emoji]));
+let lastPop = 0;
+
+// Floats one reaction up the table. Spectators' reactions rise from the bottom edge of the felt.
+export function playReaction(layer, r) {
+  const emoji = REACTION[r.emote];
+  const page = layer?.closest('.pk-page');
+  if (!emoji || !page) return;
+  let from;
+  const face = r.seat != null ? faceOf(page, r.seat) : null;
+  if (face) from = centre(face);
+  else {
+    const felt = page.querySelector('.pk-felt')?.getBoundingClientRect();
+    if (!felt) return;
+    from = { x: felt.left + felt.width * (0.3 + Math.random() * 0.4), y: felt.bottom - 20 };
+  }
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    spawn(layer, { x: from.x, y: from.y - 30, text: emoji, cls: 'tw-still', life: 1200 });
+    return;
+  }
+  const el = spawn(layer, { x: from.x, y: from.y, text: emoji, cls: 'rx-float', life: 2300 });
+  const rise = 150 + Math.random() * 90;
+  const sway = (Math.random() - 0.5) * 70;
+  el.animate(
+    [
+      { transform: 'translate(-50%, -50%) scale(0.3)', opacity: 0 },
+      { transform: `translate(calc(-50% + ${sway * 0.2}px), calc(-50% - 30px)) scale(1.35)`, opacity: 1, offset: 0.15 },
+      { transform: `translate(calc(-50% - ${sway * 0.3}px), calc(-50% - ${rise * 0.5}px)) scale(1.1)`, opacity: 1, offset: 0.55 },
+      { transform: `translate(calc(-50% + ${sway}px), calc(-50% - ${rise}px)) scale(0.9)`, opacity: 0 },
+    ],
+    { duration: 2200, easing: 'ease-out', fill: 'forwards' },
+  );
+  // A soft pop, at most a few times a second however many reactions arrive.
+  const now = Date.now();
+  if (now - lastPop > 180) {
+    lastPop = now;
+    throwSfx.pop();
+  }
+}
+
+// The 😀 button on the table and the tray of reactions it opens. The tray stays open for quick repeat taps.
+export function ReactionDock({ onReact }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const dock = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => { if (!dock.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      window.removeEventListener('keydown', key);
+    };
+  }, [open]);
+  const send = (id) => onReact(id, (r) => {
+    setNote(r?.ok ? '' : r?.error || '');
+    if (!r?.ok) setTimeout(() => setNote(''), 1200);
+  });
+  return (
+    <div className={`rx-dock ${open ? 'open' : ''}`} ref={dock}>
+      {open && (
+        <div className="rx-tray" role="toolbar" aria-label="Reactions">
+          {REACTIONS.map((r) => (
+            <button key={r.id} className="rx-emote" onClick={() => send(r.id)} aria-label={`React ${r.emoji}`}>{r.emoji}</button>
+          ))}
+          {note && <span className="rx-note">{note}</span>}
+        </div>
+      )}
+      <button className="rx-btn" onClick={() => setOpen(!open)} title="React" aria-label="Reactions" aria-expanded={open}>{open ? '✕' : '😀'}</button>
+    </div>
+  );
 }
 
 // ---- the menu ------------------------------------------------------------------
