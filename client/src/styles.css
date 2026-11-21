@@ -594,10 +594,10 @@ select {
 /* Backs: crimson with a woven gold lattice, a gold-lined white border and a centre medallion */
 .pk-card.back {
   background:
-    radial-gradient(circle at 50% 50%, #f4d778 0 calc(var(--cw) * 0.1), #6b0f1c calc(var(--cw) * 0.1) calc(var(--cw) * 0.14), #f4d778 calc(var(--cw) * 0.14) calc(var(--cw) * 0.16), transparent calc(var(--cw) * 0.165)),
-    repeating-linear-gradient(45deg, rgba(244, 215, 120, 0.55) 0 1.5px, transparent 1.5px 7px),
-    repeating-linear-gradient(-45deg, rgba(244, 215, 120, 0.55) 0 1.5px, transparent 1.5px 7px),
-    radial-gradient(circle at 50% 45%, #b3233a 0%, #5a0c18 100%);
+    radial-gradient(circle at 50% 50%, var(--back-ink, #f4d778) 0 calc(var(--cw) * 0.1), var(--back-b, #5a0c18) calc(var(--cw) * 0.1) calc(var(--cw) * 0.14), var(--back-ink, #f4d778) calc(var(--cw) * 0.14) calc(var(--cw) * 0.16), transparent calc(var(--cw) * 0.165)),
+    repeating-linear-gradient(45deg, var(--back-line, rgba(244, 215, 120, 0.55)) 0 1.5px, transparent 1.5px 7px),
+    repeating-linear-gradient(-45deg, var(--back-line, rgba(244, 215, 120, 0.55)) 0 1.5px, transparent 1.5px 7px),
+    radial-gradient(circle at 50% 45%, var(--back-a, #b3233a) 0%, var(--back-b, #5a0c18) 100%);
   box-shadow:
     0 1px 0 #dcd8cd, 0 2px 0 #b9b4a8, 0 6px 11px rgba(0, 0, 0, 0.55),
     inset 0 0 0 calc(var(--cw) * 0.06) #f8f4ea, inset 0 0 0 calc(var(--cw) * 0.08) #c9a23a;
@@ -1325,7 +1325,7 @@ body {
 /* ---------- Table ---------- */
 .pk-page {
   background:
-    radial-gradient(900px 480px at 50% 34%, rgba(46, 160, 130, 0.22), transparent 62%),
+    radial-gradient(900px 480px at 50% 34%, var(--glow, rgba(46, 160, 130, 0.22)), transparent 62%),
     radial-gradient(ellipse at 50% 0%, #141a26 0%, #06080c 78%);
 }
 .pk-top { border-bottom: 1px solid rgba(255, 255, 255, 0.05); background: rgba(6, 8, 12, 0.55); }
@@ -1333,8 +1333,7 @@ body {
 .pk-blinds-pill { background: rgba(255, 255, 255, 0.07); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
 /* The rail: dark padded leather with a wooden lip and a thin light strip */
 .pk-table {
-  background:
-    linear-gradient(160deg, #5a4630 0%, #2c2117 38%, #15100b 100%);
+  background: var(--rail, linear-gradient(160deg, #5a4630 0%, #2c2117 38%, #15100b 100%));
   box-shadow:
     0 30px 80px rgba(0, 0, 0, 0.8),
     inset 0 2px 3px rgba(255, 255, 255, 0.22),
@@ -1343,12 +1342,13 @@ body {
   padding: clamp(9px, 1.9vh, 18px);
 }
 .pk-felt {
-  border: 2px solid rgba(245, 197, 66, 0.55);
+  border: 2px solid var(--edge, rgba(245, 197, 66, 0.55));
   background:
     radial-gradient(ellipse at 50% 38%, rgba(255, 255, 255, 0.13) 0%, transparent 48%),
+    var(--felt-extra, linear-gradient(transparent, transparent)),
     repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.016) 0 2px, transparent 2px 6px),
-    radial-gradient(ellipse at 50% 46%, #17806a 0%, #0f5a4c 52%, #07302a 100%);
-  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.7), inset 0 0 0 6px rgba(0, 0, 0, 0.18);
+    radial-gradient(ellipse at 50% 46%, var(--felt-a, #17806a) 0%, var(--felt-b, #0f5a4c) 52%, var(--felt-c, #07302a) 100%);
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.7), inset 0 0 0 6px rgba(0, 0, 0, 0.18), var(--edge-glow, 0 0 0 transparent);
 }
 /* The betting line painted on the felt */
 .pk-felt.ring::before {
@@ -1662,4 +1662,92 @@ body {
   .st:not(.me) .st-plate { max-width: 88px; }
   .st:not(.me) .st-name { max-width: 46px; }
   .st:not(.me) .st-face { width: 22px; height: 22px; }
+}
+
+/* ================= Table themes ================= */
+/* Each theme only sets colours; the table, the picker swatches and the card backs read them. */
+.theme-royal {
+  --felt-a: #2f6fd6; --felt-b: #1a4596; --felt-c: #0a1f4d;
+  --rail: linear-gradient(160deg, #4a3a2a 0%, #24190f 40%, #0f0a06 100%);
+  --edge: rgba(245, 197, 66, 0.6); --glow: rgba(60, 120, 230, 0.25);
+  --back-a: #1e4fae; --back-b: #0b2360; --back-ink: #f4d778; --back-line: rgba(244, 215, 120, 0.5);
+}
+.theme-crimson {
+  --felt-a: #b52a40; --felt-b: #7c1829; --felt-c: #3a0811;
+  --rail: linear-gradient(160deg, #3b3b3f 0%, #19191c 40%, #070708 100%);
+  --edge: rgba(245, 197, 66, 0.65); --glow: rgba(200, 40, 70, 0.22);
+  --back-a: #1f1f24; --back-b: #0a0a0c; --back-ink: #e5c158; --back-line: rgba(229, 193, 88, 0.45);
+}
+.theme-neon {
+  --felt-a: #1d2350; --felt-b: #121535; --felt-c: #070818;
+  --felt-extra: radial-gradient(ellipse at 50% 50%, transparent 58%, rgba(34, 230, 255, 0.12) 72%, transparent 80%);
+  --rail: linear-gradient(160deg, #23263a 0%, #101220 45%, #05060d 100%);
+  --edge: rgba(34, 230, 255, 0.85); --edge-glow: 0 0 18px rgba(34, 230, 255, 0.55);
+  --glow: rgba(160, 60, 255, 0.24);
+  --back-a: #ff2fb4; --back-b: #3a0a5c; --back-ink: #22e6ff; --back-line: rgba(34, 230, 255, 0.5);
+}
+.theme-galaxy {
+  --felt-a: #7a3ccc; --felt-b: #48208a; --felt-c: #1a0a3c;
+  --felt-extra:
+    radial-gradient(1.5px 1.5px at 18% 30%, rgba(255, 255, 255, 0.85), transparent),
+    radial-gradient(1px 1px at 72% 22%, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(1.5px 1.5px at 84% 64%, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(1px 1px at 30% 76%, rgba(255, 255, 255, 0.75), transparent),
+    radial-gradient(1px 1px at 58% 84%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 42% 14%, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(ellipse at 30% 60%, rgba(255, 120, 220, 0.18), transparent 45%);
+  --rail: linear-gradient(160deg, #2c2440 0%, #150f24 45%, #07040f 100%);
+  --edge: rgba(200, 150, 255, 0.75); --edge-glow: 0 0 16px rgba(170, 110, 255, 0.45);
+  --glow: rgba(150, 80, 255, 0.26);
+  --back-a: #6b2fc4; --back-b: #22083f; --back-ink: #ffd6ff; --back-line: rgba(255, 214, 255, 0.4);
+}
+.theme-gold {
+  --felt-a: #2e2e30; --felt-b: #18181a; --felt-c: #050506;
+  --rail: linear-gradient(160deg, #f3d77a 0%, #b8862b 30%, #6e4a12 65%, #3a2507 100%);
+  --edge: rgba(245, 197, 66, 0.9); --edge-glow: 0 0 14px rgba(245, 197, 66, 0.35);
+  --glow: rgba(245, 197, 66, 0.16);
+  --back-a: #1c1c1e; --back-b: #060607; --back-ink: #f5c542; --back-line: rgba(245, 197, 66, 0.55);
+}
+.theme-ocean {
+  --felt-a: #13a3b5; --felt-b: #0b6a7a; --felt-c: #033640;
+  --rail: linear-gradient(160deg, #d9c9a6 0%, #9c8762 35%, #4e3f27 100%);
+  --edge: rgba(255, 255, 255, 0.55); --glow: rgba(20, 170, 190, 0.24);
+  --back-a: #0f7e8f; --back-b: #043945; --back-ink: #fff3cf; --back-line: rgba(255, 243, 207, 0.45);
+}
+
+/* The picker */
+.tp-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(3, 5, 9, 0.6); display: grid; place-items: center; padding: 16px; }
+.tp {
+  width: min(460px, 100%); max-height: calc(100dvh - 32px); overflow: auto;
+  background: linear-gradient(180deg, #151b28, #0d121b); border: 1px solid var(--line); border-radius: 16px;
+  padding: 14px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+}
+.tp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.tp-head h3 { margin: 0; }
+.tp-head .btn { padding: 4px 10px; }
+.tp-note { margin: 0 0 12px; }
+.tp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
+.tp-option { display: grid; gap: 7px; justify-items: center; padding: 10px 8px 9px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 12px; color: var(--text); font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+.tp-option:hover { border-color: rgba(245, 197, 66, 0.55); transform: translateY(-1px); }
+.tp-option.on { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold), 0 0 16px rgba(245, 197, 66, 0.25); }
+.tp-option small { color: var(--muted); font-weight: 400; font-size: 0.7rem; margin-top: -4px; }
+.tp-swatch { position: relative; width: 100%; max-width: 110px; aspect-ratio: 1.7; border-radius: 999px; padding: 6px; background: var(--rail, linear-gradient(160deg, #5a4630 0%, #2c2117 38%, #15100b 100%)); box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5); }
+.tp-swatch i {
+  display: block; width: 100%; height: 100%; border-radius: 999px;
+  border: 1.5px solid var(--edge, rgba(245, 197, 66, 0.55));
+  background: var(--felt-extra, linear-gradient(transparent, transparent)), radial-gradient(ellipse at 50% 46%, var(--felt-a, #17806a) 0%, var(--felt-b, #0f5a4c) 52%, var(--felt-c, #07302a) 100%);
+  box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.6), var(--edge-glow, 0 0 0 transparent);
+}
+.tp-swatch b {
+  position: absolute; right: 16%; top: 30%; width: 16%; aspect-ratio: 0.72; border-radius: 3px;
+  background: radial-gradient(circle at 50% 45%, var(--back-a, #b3233a) 0%, var(--back-b, #5a0c18) 100%);
+  box-shadow: inset 0 0 0 2px #f8f4ea, 0 2px 4px rgba(0, 0, 0, 0.5); transform: rotate(8deg);
+}
+.pk-theme-btn { font-size: 0.95rem; }
+.pk-menu-theme { margin-bottom: 12px; width: 100%; }
+@media (max-width: 900px) {
+  .pk-top-buttons .pk-theme-btn { display: none; } /* on phones it lives in the ☰ menu */
+}
+@media (min-width: 901px) {
+  .pk-menu-theme { display: none; } /* on a wide screen it is in the header */
 }

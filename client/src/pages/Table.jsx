@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Avatar, money } from '../ui.jsx';
 import { sfx, pokerSfx } from '../audio/sound.js';
+import { useTableTheme } from '../tableTheme.js';
+import ThemePicker from './ThemePicker.jsx';
 
 // The poker table: up to six seats around the felt, for players and spectators alike.
 
@@ -144,6 +146,8 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
   const [raiseTo, setRaiseTo] = useState(view.minRaiseTo);
   const [muted, setMuted] = useState(sfx.isMuted());
   const [showMenu, setShowMenu] = useState(false);
+  const theme = useTableTheme();
+  const [picking, setPicking] = useState(false); // the table theme picker is open
   const [buyIn, setBuyIn] = useState(null); // { seat } or { topUp: true }
 
   const [inBB, setInBB] = useState(() => {
@@ -361,6 +365,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
 
   const menu = (
     <>
+      <button className="btn pk-menu-theme" onClick={() => { setShowMenu(false); setPicking(true); }}>🎨 Table theme</button>
       {seated && isCash && (
         <div className="pk-menu">
           <button className="btn" onClick={() => setBuyIn({ topUp: true })}>Add chips</button>
@@ -386,7 +391,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
 
   return (
     <Unit.Provider value={unit}>
-      <div className="pk-page">
+      <div className={`pk-page theme-${theme}`}>
         {nav}
         <header className="pk-top">
           {seated && isCash && !finished ? (
@@ -410,6 +415,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
             <button className={`btn ghost pk-icon pk-chat-btn ${chatOpen ? 'on' : ''}`} onClick={() => setChatOpen(!chatOpen)} title="Table chat" aria-label="Table chat">
               💬{unread > 0 && <i className="pk-unread">{unread > 9 ? '9+' : unread}</i>}
             </button>
+            <button className="btn ghost pk-icon pk-theme-btn" onClick={() => setPicking(true)} title="Table theme (or right-click the table)" aria-label="Table theme">🎨</button>
             <button className="btn ghost pk-icon pk-menu-btn" onClick={() => setShowMenu(!showMenu)} title="Table menu and hand history">☰</button>
             <button className="btn ghost pk-unit" onClick={unit.toggle} title={SWITCH_HINT}>{inBB ? 'BB' : 'Chips'}</button>
             <button
@@ -426,7 +432,14 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
         </header>
 
         <div className="pk-main">
-          <div className="pk-table">
+          <div
+            className="pk-table"
+            onContextMenu={(e) => {
+              // Right-click the table to change its look.
+              e.preventDefault();
+              setPicking(true);
+            }}
+          >
             <div className={`pk-felt ring seats-${max}`}>
               <div className="pk-watermark">PITCH DUEL</div>
 
@@ -692,6 +705,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
         )}
 
         {buyIn && <BuyIn view={view} me={me} seat={buyIn.seat} topUp={buyIn.topUp} socket={socket} onClose={() => setBuyIn(null)} />}
+        {picking && <ThemePicker current={theme} onClose={() => setPicking(false)} />}
       </div>
     </Unit.Provider>
   );
