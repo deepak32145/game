@@ -180,6 +180,105 @@ function GameHands({ token, me, game, onBack }) {
   );
 }
 
+// Opened from the table: every hand of the current sitting there, newest first, each one replayable.
+// A sitting is the same "game" the Hands tab shows (no break longer than 20 minutes; a whole Sit & Go).
+export function SessionHands({ token, me, tableId, tableName, onClose }) {
+  const [game, setGame] = useState(null);
+  const [hands, setHands] = useState(null);
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState('');
+  const [replay, setReplay] = useState(null);
+
+  const page = (before) => {
+    const q = new URLSearchParams({ limit: PAGE, tableId, from: new Date(game.start).getTime(), before });
+    return api(`/hands?${q}`, { token });
+  };
+  useEffect(() => {
+    api('/hands/games', { token })
+      .then((r) => {
+        const g = r.games.find((x) => x.tableId === tableId);
+        if (!g) return setHands([]);
+        setGame(g);
+        const q = new URLSearchParams({ limit: PAGE, tableId, from: new Date(g.start).getTime() });
+        return api(`/hands?${q}`, { token }).then((h) => { setHands(h.hands); setMore(h.more); });
+      })
+      .catch((err) => setError(err.message));
+  }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && replay == null) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [replay]);
+  const loadMore = () =>
+    page(new Date(hands[hands.length - 1].at).getTime())
+      .then((r) => { setHands([...hands, ...r.hands]); setMore(r.more); })
+      .catch((err) => setError(err.message));
+
+  const net = (hands || []).reduce((n, h) => n + (h.players.find((p) => p.uid === me.id)?.net || 0), 0);
+  const won = (hands || []).filter((h) => (h.players.find((p) => p.uid === me.id)?.net || 0) > 0).length;
+  const best = (hands || []).reduce((b, h) => Math.max(b, h.players.find((p) => p.uid === me.id)?.net || 0), 0);
+
+  return (
+    <div className="sh-backdrop" onClick={onClose}>
+      <div className="sh" role="dialog" aria-label="This session's hands" onClick={(e) => e.stopPropagation()}>
+        <header className="sh-head">
+          <div>
+            <b>This session</b>
+            <span className="muted small">{tableName}{game ? ` · since ${time(game.start)}` : ''}</span>
+          </div>
+          <button className="btn ghost" onClick={onClose} aria-label="Close">✕</button>
+        </header>
+        {error && <p className="error">{error}</p>}
+        {!hands && !error && <p className="muted small sh-note">Loading…</p>}
+        {hands && hands.length === 0 && (
+          <p className="muted small sh-note">No finished hands yet. Each hand appears here a moment after it ends.</p>
+        )}
+        {hands && hands.length > 0 && (
+          <>
+            <div className="sh-stats">
+              <div><span>Hands</span><b>{hands.length}{more ? '+' : ''}</b></div>
+              <div><span>Won</span><b>{won}</b></div>
+              <div><span>Result</span><b className={tone(net)}>{signed(net)}</b></div>
+              <div><span>Best pot</span><b className={tone(best)}>{signed(best)}</b></div>
+            </div>
+            <ul className="hh-list sh-list">
+              {hands.map((h, i) => {
+                const mine = h.players.find((p) => p.uid === me.id);
+                return (
+                  <li key={h.id}>
+                    <button className="hh-row" onClick={() => setReplay(i)} title="Replay this hand">
+                      <span className="hh-when">
+                        <b>#{h.handNo}</b>
+                        <small>{time(h.at)}</small>
+                      </span>
+                      <span className="hh-main">
+                        <span className="hh-deal">
+                          {mine && <Cards cards={mine.cards} />}
+                          {h.board.length > 0 && <><i>board</i><Cards cards={h.board} /></>}
+                        </span>
+                        <span className="hh-table"><small>{h.players.length} players · pot {h.pot.toLocaleString('en-IN')}{h.showdown ? ' · showdown' : ''}</small></span>
+                      </span>
+                      <span className="hh-net">
+                        <b className={tone(mine?.net || 0)}>{signed(mine?.net || 0)}</b>
+                        <small>{mine?.folded ? 'folded' : mine?.hand || ((mine?.net || 0) > 0 ? 'won' : '')}</small>
+                      </span>
+                      <span className="hh-play" aria-hidden="true">▶</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {more && <button className="btn sh-more" onClick={loadMore}>Show older hands</button>}
+          </>
+        )}
+        {replay != null && hands?.[replay] && (
+          <Replayer token={token} hands={hands} index={replay} me={me} onIndex={setReplay} onClose={() => setReplay(null)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Hands({ token, me }) {
   const [tables, setTables] = useState([]);
   const [table, setTable] = useState('');

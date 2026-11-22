@@ -234,6 +234,7 @@ export default function App() {
           key={table.id}
           table={table}
           me={me}
+          token={auth.token}
           socket={socket}
           chat={chats[table.id] || NO_CHAT}
           onChatHistory={(msgs) => setChats((prev) => ({ ...prev, [table.id]: msgs }))}

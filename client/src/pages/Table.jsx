@@ -5,6 +5,7 @@ import { useTableTheme, useTableFx, useShowThrows } from '../tableTheme.js';
 import { SceneFx, FeltFx } from './TableFx.jsx';
 import { ThrowMenu, playThrow, THROW_COOLDOWN_MS, ReactionDock, playReaction } from './Throwables.jsx';
 import ThemePicker from './ThemePicker.jsx';
+import { SessionHands } from './Hands.jsx';
 
 // The poker table: up to six seats around the felt, for players and spectators alike.
 
@@ -137,7 +138,7 @@ function BuyIn({ view, me, seat, socket, onClose, topUp }) {
   );
 }
 
-export default function Table({ table: view, me, socket, canJoin, maxTables, nav, onLobby, onClose, chat, onChatHistory }) {
+export default function Table({ table: view, me, token, socket, canJoin, maxTables, nav, onLobby, onClose, chat, onChatHistory }) {
   const max = view.maxSeats;
   const seated = view.mySeat != null;
   const mySeat = seated ? view.seats[view.mySeat] : null;
@@ -149,6 +150,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
   const [muted, setMuted] = useState(sfx.isMuted());
   const [showMenu, setShowMenu] = useState(false);
   const theme = useTableTheme();
+  const [sessionOpen, setSessionOpen] = useState(false); // this sitting's hands, for replaying
   const fx = useTableFx();
   const [picking, setPicking] = useState(false); // the table theme picker is open
   const [buyIn, setBuyIn] = useState(null); // { seat } or { topUp: true }
@@ -415,6 +417,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
 
   const menu = (
     <>
+      <button className="btn pk-session-btn" onClick={() => { setShowMenu(false); setSessionOpen(true); }}>🕘 This session's hands</button>
       <button className="btn pk-menu-theme" onClick={() => { setShowMenu(false); setPicking(true); }}>🎨 Table theme</button>
       {seated && isCash && (
         <div className="pk-menu">
@@ -780,6 +783,7 @@ export default function Table({ table: view, me, socket, canJoin, maxTables, nav
         {throwAt && view.seats[throwAt.seat] && (
           <ThrowMenu target={throwAt} canThrow={seated && !finished} readyAt={throwReadyAt.current} onThrow={sendThrow} onClose={() => setThrowAt(null)} />
         )}
+        {sessionOpen && <SessionHands token={token} me={me} tableId={view.id} tableName={view.name} onClose={() => setSessionOpen(false)} />}
         {picking && <ThemePicker current={theme} fx={fx} onClose={() => setPicking(false)} />}
       </div>
     </Unit.Provider>
