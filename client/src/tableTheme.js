@@ -37,11 +37,21 @@ export function setTableTheme(id) {
 }
 
 // Animated scenery on or off (on unless the player turned it off).
+// Animated scenery works the graphics chip hard, which older phones feel as lag. Unless the player
+// has chosen, it starts on only for a wide screen on a device with plenty of processor cores.
+const fxByDefault = () => {
+  try {
+    return window.matchMedia('(min-width: 901px)').matches && (navigator.hardwareConcurrency || 4) >= 6;
+  } catch {
+    return false;
+  }
+};
 function loadFx() {
   try {
-    return localStorage.getItem(FX_KEY) !== 'off';
+    const saved = localStorage.getItem(FX_KEY);
+    return saved ? saved !== 'off' : fxByDefault();
   } catch {
-    return true;
+    return fxByDefault();
   }
 }
 

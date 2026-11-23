@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 // Animated scenery for the table themes: a background scene behind the whole table page,
 // and a layer of light on the felt. Pure decoration: CSS animations only, never clickable,
 // hidden from screen readers, and switched off by the player's "animations" setting or
@@ -16,10 +18,11 @@ const spread = (count, seed) => Array.from({ length: count }, (_, i) => ({
   delay: rand(i, seed + 3),
 }));
 
-const GOLD = spread(26, 1);
-const BUBBLES = spread(20, 2);
-const EMBERS = spread(28, 3);
-const SUITS = spread(12, 4);
+// Kept small: every moving piece costs a phone some work on each frame.
+const GOLD = spread(12, 1);
+const BUBBLES = spread(9, 2);
+const EMBERS = spread(12, 3);
+const SUITS = spread(7, 4);
 const SUIT_GLYPHS = ['♠', '♥', '♦', '♣'];
 
 // Rising particles: each gets its own lane, size, speed and a negative delay so the screen starts full.
@@ -39,7 +42,7 @@ const rising = (list, className, { min, max, slow, fast }, render = () => null) 
     </i>
   ));
 
-export function SceneFx({ theme }) {
+export const SceneFx = memo(function SceneFx({ theme }) {
   switch (theme) {
     case 'neon':
       return (
@@ -56,7 +59,6 @@ export function SceneFx({ theme }) {
           <div className="fx-nebula" />
           <div className="fx-stars s1" />
           <div className="fx-stars s2" />
-          <div className="fx-stars s3" />
           <i className="fx-shoot a" />
           <i className="fx-shoot b" />
           <i className="fx-shoot c" />
@@ -102,9 +104,9 @@ export function SceneFx({ theme }) {
         </div>
       );
   }
-}
+});
 
 // Light moving across the felt. Its look comes entirely from the theme class above it.
-export function FeltFx() {
+export const FeltFx = memo(function FeltFx() {
   return <span className="fx-felt" aria-hidden="true" />;
-}
+});

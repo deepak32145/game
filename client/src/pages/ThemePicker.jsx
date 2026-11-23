@@ -37,7 +37,7 @@ export default function ThemePicker({ current, fx, onClose }) {
           <span>
             <b>Animated scenery</b>
             <br />
-            <span className="muted small">Turn off to save battery or if motion distracts you</span>
+            <span className="muted small">Moving backgrounds. Off by default on phones, as they can slow older ones down</span>
           </span>
           <input type="checkbox" checked={fx} onChange={(e) => setTableFx(e.target.checked)} />
         </label>

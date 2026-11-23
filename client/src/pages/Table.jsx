@@ -80,12 +80,20 @@ function Chips({ amount, bigBlind }) {
   );
 }
 
+// The countdown around the acting player's avatar: green, then yellow, then red. It is redrawn five
+// times a second rather than animated every frame, because a continuous animation kept a phone's
+// main thread busy for the whole of every turn; a 25-second countdown looks just as smooth this way.
+const TIMER_STEP_MS = 200;
 function TimerRing({ ms }) {
-  return (
-    <svg className="pk-ring" viewBox="0 0 48 48">
-      <circle cx="24" cy="24" r="22" style={{ animationDuration: `${ms}ms` }} />
-    </svg>
-  );
+  const [end] = useState(() => Date.now() + ms);
+  const [left, setLeft] = useState(ms);
+  useEffect(() => {
+    const t = setInterval(() => setLeft(Math.max(0, end - Date.now())), TIMER_STEP_MS);
+    return () => clearInterval(t);
+  }, [end]);
+  const share = ms > 0 ? left / ms : 0;
+  const colour = share > 0.45 ? '#4ade80' : share > 0.2 ? '#facc15' : '#ef4444';
+  return <span className="pk-timer" style={{ background: `conic-gradient(${colour} ${share * 360}deg, transparent 0)` }} aria-hidden="true" />;
 }
 
 // Choosing how much to bring to a cash table.
@@ -494,6 +502,7 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
               setPicking(true);
             }}
           >
+            {fx && <span className="pk-railfx" aria-hidden="true"><i /></span>}
             <div className={`pk-felt ring seats-${max}`}>
               <FeltFx />
               {!finished && <ReactionDock onReact={sendReaction} />}
