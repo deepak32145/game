@@ -96,6 +96,20 @@ function TimerRing({ ms }) {
   return <span className="pk-timer" style={{ background: `conic-gradient(${colour} ${share * 360}deg, transparent 0)` }} aria-hidden="true" />;
 }
 
+// Admin only: play the seat yourself, or hand it to the AI bot (Claude plays; your chips).
+export function PlayAs({ asBot, onChange }) {
+  return (
+    <div className="play-as" role="radiogroup" aria-label="Play as">
+      <button type="button" role="radio" aria-checked={!asBot} className={`play-as-opt ${!asBot ? 'on' : ''}`} onClick={() => onChange(false)}>
+        <span>👤</span><b>Play myself</b>
+      </button>
+      <button type="button" role="radio" aria-checked={asBot} className={`play-as-opt ${asBot ? 'on' : ''}`} onClick={() => onChange(true)}>
+        <span>🤖</span><b>Join as Bot</b><small>Claude plays your seat</small>
+      </button>
+    </div>
+  );
+}
+
 // Choosing how much to bring to a cash table.
 function BuyIn({ view, me, seat, socket, onClose, topUp }) {
   const { minBuyIn, maxBuyIn } = view.info;
@@ -105,10 +119,11 @@ function BuyIn({ view, me, seat, socket, onClose, topUp }) {
   const [amount, setAmount] = useState(Math.max(min, Math.min(max, topUp ? max : Math.round(maxBuyIn / 2))));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [asBot, setAsBot] = useState(false);
   const short = max < min;
   const go = () => {
     setBusy(true);
-    socket.emit(topUp ? 'cash:topup' : 'cash:sit', topUp ? { tableId: view.id, amount } : { tableId: view.id, seat, amount }, (r) => {
+    socket.emit(topUp ? 'cash:topup' : 'cash:sit', topUp ? { tableId: view.id, amount } : { tableId: view.id, seat, amount, asBot }, (r) => {
       setBusy(false);
       if (r.ok) onClose();
       else setError(r.error);
@@ -136,10 +151,11 @@ function BuyIn({ view, me, seat, socket, onClose, topUp }) {
             <div className="buyin-range"><span>{money(min)}</span><span>{money(max)}</span></div>
           </>
         )}
+        {!topUp && me.isAdmin && <PlayAs asBot={asBot} onChange={setAsBot} />}
         {error && <p className="error">{error}</p>}
         <div className="row">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={short || busy} onClick={go}>{topUp ? 'Add chips' : 'Sit down'}</button>
+          <button className="btn primary" disabled={short || busy} onClick={go}>{topUp ? 'Add chips' : asBot ? 'Sit the bot down' : 'Sit down'}</button>
         </div>
       </div>
     </div>
@@ -150,6 +166,14 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
   const max = view.maxSeats;
   const seated = view.mySeat != null;
   const mySeat = seated ? view.seats[view.mySeat] : null;
+  const botSeat = !!mySeat?.bot; // the AI bot is playing my seat
+  const [botSaid, setBotSaid] = useState('');
+  useEffect(() => {
+    const onDecision = ({ tableId, text }) => { if (tableId === view.id) setBotSaid(text); };
+    socket.on('bot:decision', onDecision);
+    return () => socket.off('bot:decision', onDecision);
+  }, [socket, view.id]);
+  const setBot = (on) => socket.emit('bot:set', { tableId: view.id, on }, (r) => { if (!r?.ok) setBotSaid(r?.error || 'Could not switch'); });
   const myTurn = seated && view.toAct === view.mySeat;
   const bigBlind = view.blinds[1];
   const isCash = view.kind === 'cash';
@@ -280,7 +304,7 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
 
   const turnKey = myTurn ? `${view.handNo}-${view.street}-${view.pot}` : '';
   useEffect(() => {
-    if (!myTurn || view.deadlineIn == null) return;
+    if (!myTurn || view.deadlineIn == null || botSeat) return;
     pokerSfx.yourTurn();
     const end = Date.now() + view.deadlineIn;
     const t = setInterval(() => {
@@ -392,7 +416,7 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
   const [pre, setPre] = useState(null); // 'checkfold' | 'callany' | null
   useEffect(() => setPre(null), [view.handNo]);
   useEffect(() => {
-    if (!myTurn || !pre) return;
+    if (!myTurn || !pre || botSeat) return;
     if (pre === 'checkfold') act(view.toCall === 0 ? 'check' : 'fold');
     else act(view.toCall === 0 ? 'check' : 'call');
     setPre(null);
@@ -427,6 +451,9 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
     <>
       <button className="btn pk-session-btn" onClick={() => { setShowMenu(false); setSessionOpen(true); }}>🕘 This session's hands</button>
       <button className="btn pk-menu-theme" onClick={() => { setShowMenu(false); setPicking(true); }}>🎨 Table theme</button>
+      {seated && me.isAdmin && !botSeat && !finished && (
+        <button className="btn pk-bot-btn" onClick={() => { setShowMenu(false); setBot(true); }}>🤖 Let the bot play my seat</button>
+      )}
       {seated && isCash && (
         <div className="pk-menu">
           <button className="btn" onClick={() => setBuyIn({ topUp: true })}>Add chips</button>
@@ -573,6 +600,7 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
                       {badge && <span key={`${badge.type}${badge.amount}`} className={`pk-act ${badge.type}`}>{ACT_LABEL[badge.type]}{badge.amount ? ` ${unit.fmt(badge.amount)}` : ''}</span>}
                       {won && <span className="pk-ribbon">+{unit.fmt(result.won[p.uid])}</span>}
                       {p.away && !p.sittingOut && <span className="st-away">away</span>}
+                      {p.bot && <span className="st-bot" title="This seat is played by the AI bot">🤖</span>}
                       {bubbles[p.uid] && (
                         <span key={bubbles[p.uid].id} className={`st-bubble ${isEmojiOnly(bubbles[p.uid].text) ? 'big' : ''}`}>{bubbles[p.uid].text}</span>
                       )}
@@ -646,7 +674,18 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
 
         {/* Fixed-height bar pinned to the bottom of the screen: the buttons never move or scroll away. */}
         <div className="pk-bar">
-          {myTurn && !finished ? (
+          {botSeat && !finished ? (
+            <div className="pk-botbar">
+              <div className="pk-botbar-head">
+                <span className={`pk-botbar-face ${myTurn ? 'thinking' : ''}`}>🤖</span>
+                <div>
+                  <b>{myTurn ? 'The bot is thinking…' : 'The bot is playing your seat'}</b>
+                  <small>{botSaid || 'Claude decides each move. You can take over at any time.'}</small>
+                </div>
+              </div>
+              <button className="btn" onClick={() => setBot(false)}>Take over</button>
+            </div>
+          ) : myTurn && !finished ? (
             <>
               {view.canRaise && (
                 <div className="pk-sizing">

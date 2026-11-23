@@ -12,6 +12,7 @@ export default function Admin({ token, onBack }) {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // the player whose wallet is being changed
   const [history, setHistory] = useState(null); // { user, txns }
+  const [section, setSection] = useState('players'); // 'players' | 'bot'
 
   const load = () => {
     api(`/admin/users?q=${encodeURIComponent(q)}`, { token }).then(setUsers).catch((e) => setError(e.message));
@@ -59,6 +60,13 @@ export default function Admin({ token, onBack }) {
         </div>
       )}
 
+      <nav className="tabs admin-tabs">
+        <button className={section === 'players' ? 'active' : ''} onClick={() => setSection('players')}>Players</button>
+        <button className={section === 'bot' ? 'active' : ''} onClick={() => setSection('bot')}>🤖 AI Bot</button>
+      </nav>
+
+      {section === 'bot' && <BotPanel token={token} />}
+      {section === 'players' && <>
       <input className="admin-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or email" />
       {error && <div className="notice" onClick={() => setError('')}>{error}</div>}
 
@@ -84,6 +92,7 @@ export default function Admin({ token, onBack }) {
         ))}
         {users.length === 0 && <p className="muted">No players found.</p>}
       </div>
+      </>}
 
       {editing && (
         <Adjust
@@ -145,5 +154,117 @@ function Adjust({ user, sign, token, onClose, onDone }) {
         </div>
       </form>
     </div>
+  );
+}
+
+// The AI bot: whether it is ready, what it has cost today, the playbook it follows, and its recent decisions.
+const usd = (n) => `$${Number(n || 0).toFixed(n >= 1 ? 2 : 4)}`;
+function BotPanel({ token }) {
+  const [status, setStatus] = useState(null);
+  const [playbook, setPlaybook] = useState('');
+  const [budget, setBudget] = useState('');
+  const [decisions, setDecisions] = useState(null);
+  const [saved, setSaved] = useState('');
+  const [error, setError] = useState('');
+
+  const loadStatus = (first) =>
+    api('/admin/bot', { token })
+      .then((s) => {
+        setStatus(s);
+        if (first) {
+          setPlaybook(s.playbook);
+          setBudget(String(s.dailyBudgetUsd));
+        }
+      })
+      .catch((e) => setError(e.message));
+  const loadDecisions = () => api('/admin/bot/decisions?limit=80', { token }).then(setDecisions).catch(() => setDecisions([]));
+  useEffect(() => {
+    loadStatus(true);
+    loadDecisions();
+    const t = setInterval(() => { loadStatus(false); loadDecisions(); }, 8000);
+    return () => clearInterval(t);
+  }, []);
+
+  const save = async () => {
+    setError('');
+    try {
+      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget) } });
+      setStatus(s);
+      setSaved('Saved. The bot uses it from its next decision.');
+      setTimeout(() => setSaved(''), 3000);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  if (!status) return <p className="muted">{error || 'Loading…'}</p>;
+  const today = status.today;
+  return (
+    <section className="bot-panel">
+      {!status.ready && (
+        <div className="notice">
+          The bot is switched off: there is no Anthropic API key on the server. Add <code>ANTHROPIC_API_KEY=…</code> to
+          <code> server/.env.production</code> on your computer and deploy again.
+        </div>
+      )}
+      <div className="admin-summary">
+        <div><span className="muted small">Status</span><b className={status.ready ? 'plus' : 'minus'}>{status.ready ? 'Ready' : 'No API key'}</b></div>
+        <div><span className="muted small">Model</span><b>{status.model}</b></div>
+        <div><span className="muted small">Spent today</span><b>{usd(today.spentUsd)} <small className="muted">of {usd(status.dailyBudgetUsd)}</small></b></div>
+        <div><span className="muted small">Decisions today</span><b>{today.decisions}</b></div>
+        <div><span className="muted small">Average answer</span><b>{today.avgMs ? `${(today.avgMs / 1000).toFixed(1)} s` : '—'}</b></div>
+        <div><span className="muted small">Safe moves</span><b>{today.fallbacks}</b></div>
+        <div><span className="muted small">Seats playing now</span><b>{status.seats}</b></div>
+      </div>
+      <p className="muted small">
+        To play with the bot, sit at a cash table or register for a Sit &amp; Go and choose <b>🤖 Join as Bot</b>. It plays your
+        seat with your chips, shows a 🤖 on the seat, and you can take over from the table at any time. If Claude is slow, the
+        daily budget is used up, or anything goes wrong, it plays the safe move (check, otherwise fold).
+      </p>
+
+      <div className="bot-settings">
+        <label className="bot-playbook">
+          <span><b>Playbook</b> <small className="muted">Teach the bot how to play. It reads this before every decision.</small></span>
+          <textarea value={playbook} onChange={(e) => setPlaybook(e.target.value)} rows={9} maxLength={6000} />
+        </label>
+        <label className="bot-budget">
+          <span><b>Daily budget</b> <small className="muted">US dollars. Above it the bot only plays safe moves.</small></span>
+          <input type="number" min="0" max="100" step="0.5" value={budget} onChange={(e) => setBudget(e.target.value)} />
+        </label>
+        <div className="row">
+          <button className="btn primary" onClick={save}>Save</button>
+          {saved && <span className="muted small">{saved}</span>}
+          {error && <span className="error small">{error}</span>}
+        </div>
+      </div>
+
+      <h3 className="bot-log-title">Recent decisions</h3>
+      {!decisions && <p className="muted small">Loading…</p>}
+      {decisions && decisions.length === 0 && <p className="muted small">No decisions yet. Seat the bot at a table to see it play.</p>}
+      {decisions && decisions.length > 0 && (
+        <ul className="bot-log">
+          {decisions.map((d) => (
+            <li key={d.id} className={d.fallback ? 'safe' : ''}>
+              <span className="bot-log-when">
+                <b>{new Date(d.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</b>
+                <small>{d.tableName} · #{d.handNo}</small>
+              </span>
+              <span className="bot-log-spot">
+                <b>{(d.cards || []).join(' ')}</b>
+                <small>{d.street}{d.board?.length ? ` · ${d.board.join(' ')}` : ''} · pot {d.pot}{d.toCall ? ` · to call ${d.toCall}` : ''}</small>
+              </span>
+              <span className="bot-log-move">
+                <b className={`bot-move ${d.action}`}>{d.action === 'raise' ? `raise ${d.amount}` : d.action}</b>
+                <small>{d.fallback ? `safe move: ${d.fallback}` : d.reason}</small>
+              </span>
+              <span className="bot-log-cost">
+                <b>{d.ms ? `${(d.ms / 1000).toFixed(1)} s` : '—'}</b>
+                <small>{usd(d.costUsd)}</small>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

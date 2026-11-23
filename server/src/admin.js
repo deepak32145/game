@@ -1,6 +1,6 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import { User, Txn } from './models.js';
+import { User, Txn, BotDecision } from './models.js';
 import { requireUser } from './auth.js';
 import { isAdmin } from './poker/manager.js';
 import * as wallet from './wallet.js';
@@ -78,4 +78,23 @@ adminRouter.post('/users/:id/ban', validId, async (req, res) => {
 adminRouter.get('/users/:id/txns', validId, async (req, res) => {
   const txns = await Txn.find({ user: req.params.id }).sort({ createdAt: -1 }).limit(100).populate('by', 'name');
   res.json(txns.map((t) => ({ type: t.type, amount: t.amount, balanceAfter: t.balanceAfter, ref: t.ref || '', note: t.note || '', by: t.by?.name || '', at: t.createdAt })));
+});
+
+// ---- the AI bot: status, playbook and daily budget, and its recent decisions ----
+// The API key itself is never sent anywhere; the page only learns whether one is configured.
+adminRouter.get('/bot', (_req, res) => {
+  if (!hub.manager) return res.status(503).json({ error: 'The game server is starting' });
+  res.json(hub.manager.bots.status());
+});
+
+adminRouter.post('/bot', async (req, res) => {
+  if (!hub.manager) return res.status(503).json({ error: 'The game server is starting' });
+  const { playbook, dailyBudgetUsd } = req.body || {};
+  res.json(await hub.manager.bots.saveSettings({ playbook, dailyBudgetUsd }));
+});
+
+adminRouter.get('/bot/decisions', async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Math.floor(Number(req.query.limit)) || 60));
+  const rows = await BotDecision.find().sort({ at: -1 }).limit(limit).lean();
+  res.json(rows.map(({ _id, __v, uid, ...d }) => ({ id: _id.toString(), ...d })));
 });

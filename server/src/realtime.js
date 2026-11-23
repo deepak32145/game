@@ -1,5 +1,5 @@
 import { userFromToken } from './auth.js';
-import { createManager } from './poker/manager.js';
+import { createManager, isAdmin } from './poker/manager.js';
 import { hub } from './hub.js';
 
 // Socket wiring: who is connected, and passing each request to the poker manager.
@@ -39,12 +39,15 @@ export function setupRealtime(io) {
     on('table:watch', ({ tableId }) => manager.watch(socket, tableId));
     on('table:unwatch', ({ tableId }) => manager.closeView(socket, tableId));
 
-    on('cash:sit', (p) => manager.cashSit(uid, p));
+    // Only the admin may hand a seat to the AI bot.
+    const asBot = (p) => (p.asBot ? (isAdmin(socket.data.user) ? true : null) : false);
+    on('cash:sit', (p) => (asBot(p) === null ? { ok: false, error: 'Only the admin can play as the bot' } : manager.cashSit(uid, { ...p, asBot: asBot(p) })));
     on('cash:leave', ({ tableId }) => manager.standUp(uid, tableId));
     on('cash:topup', (p) => manager.cashTopUp(uid, p));
     on('cash:sitout', (p) => manager.sitOut(uid, p));
 
-    on('sng:register', (p) => manager.sngRegister(uid, p));
+    on('sng:register', (p) => (asBot(p) === null ? { ok: false, error: 'Only the admin can play as the bot' } : manager.sngRegister(uid, { ...p, asBot: asBot(p) })));
+    on('bot:set', (p) => (isAdmin(socket.data.user) ? manager.botSet(uid, p) : { ok: false, error: 'Only the admin can use the bot' }));
     on('sng:unregister', (p) => manager.sngUnregister(uid, p));
 
     on('poker:action', (p) => manager.act(uid, p));

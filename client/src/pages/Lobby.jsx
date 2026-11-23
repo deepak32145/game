@@ -240,9 +240,14 @@ export default function Lobby({ me, lobby, token, socket, onLogout, onAdmin, onO
                       {registered ? (
                         <button className="btn" onClick={() => ask('sng:unregister', { id: s.id })}>Unregister</button>
                       ) : (
-                        <button className="btn primary" disabled={full || me.balance < s.buyIn} onClick={() => ask('sng:register', { id: s.id })}>
-                          {me.balance < s.buyIn ? 'Not enough balance' : full ? `Already in ${maxTables} games` : 'Register'}
-                        </button>
+                        <div className={`reg-row ${me.isAdmin ? 'two' : ''}`}>
+                          <button className="btn primary" disabled={full || me.balance < s.buyIn} onClick={() => ask('sng:register', { id: s.id })}>
+                            {me.balance < s.buyIn ? 'Not enough balance' : full ? `Already in ${maxTables} games` : 'Register'}
+                          </button>
+                          {me.isAdmin && me.balance >= s.buyIn && !full && (
+                            <button className="btn reg-bot" title="Register the AI bot: Claude plays your seat" onClick={() => ask('sng:register', { id: s.id, asBot: true })}>🤖 As Bot</button>
+                          )}
+                        </div>
                       )}
                     </div>
                   );

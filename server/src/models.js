@@ -90,7 +90,41 @@ const handSchema = new mongoose.Schema({
 });
 handSchema.index({ uids: 1, at: -1 });
 
+// The AI bot's settings, edited by the admin: the playbook it follows and how much it may spend a day.
+const botSettingsSchema = new mongoose.Schema({
+  key: { type: String, unique: true, default: 'main' },
+  playbook: { type: String, default: '' },
+  dailyBudgetUsd: { type: Number, default: 3 },
+});
+
+// One decision the bot made, for the admin to review. Deleted by itself after two weeks.
+export const BOT_DECISION_KEEP_DAYS = 14;
+const botDecisionSchema = new mongoose.Schema({
+  at: { type: Date, default: Date.now, index: { expires: BOT_DECISION_KEEP_DAYS * 86400 } },
+  uid: String,
+  tableId: String,
+  tableName: String,
+  handNo: Number,
+  street: String,
+  cards: [String],
+  board: [String],
+  pot: Number,
+  toCall: Number,
+  action: String, // what was played: fold | check | call | raise
+  amount: Number,
+  reason: String,
+  ms: Number, // how long Claude took
+  fallback: String, // why the bot played a safe default instead of Claude's answer, if it did
+  model: String,
+  inputTokens: Number,
+  outputTokens: Number,
+  cacheReadTokens: Number,
+  costUsd: Number,
+});
+
 export const User = mongoose.model('User', userSchema);
+export const BotSettings = mongoose.model('BotSettings', botSettingsSchema);
+export const BotDecision = mongoose.model('BotDecision', botDecisionSchema);
 export const Hand = mongoose.model('Hand', handSchema);
 export const Txn = mongoose.model('Txn', txnSchema);
 export const LoginCode = mongoose.model('LoginCode', loginCodeSchema);

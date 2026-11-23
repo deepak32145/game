@@ -131,7 +131,7 @@ export class Table {
     if (!p || p.connected === connected) return;
     p.connected = connected;
     // If it is their turn, don't make the table wait the full clock for someone who has gone.
-    if (!connected && this.toAct === p) this.setTimer(AWAY_MS, () => this.timeout(p));
+    if (!connected && this.toAct === p && !p.bot) this.setTimer(AWAY_MS, () => this.timeout(p));
     this.changed();
   }
 
@@ -271,7 +271,7 @@ export class Table {
       const p = this.players[(index + i) % n];
       if (this.needs(p)) {
         this.toAct = p;
-        this.setTimer(p.connected && !p.away ? ACT_MS : AWAY_MS, () => this.timeout(p));
+        this.setTimer(p.bot || (p.connected && !p.away) ? ACT_MS : AWAY_MS, () => this.timeout(p));
         this.changed();
         return;
       }
@@ -662,7 +662,8 @@ export class Table {
         folded: inHand(p) && p.folded,
         allIn: inHand(p) && p.allIn && !p.folded,
         sittingOut: p.sittingOut,
-        away: p.away || !p.connected,
+        away: !p.bot && (p.away || !p.connected),
+        bot: !!p.bot && p.uid === viewer, // only the seat's owner knows the AI is playing it
         act: inHand(p) ? p.act : null,
         cards: cardsFor(p),
         hasCards: inHand(p) && !p.folded,

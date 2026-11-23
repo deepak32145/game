@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import { Table } from './table.js';
 import { User, Hand } from '../models.js';
 import * as wallet from '../wallet.js';
+import { createBots } from './bots.js';
+import { createBrain } from './botBrain.js';
 
 // Runs every poker table: the permanent cash tables and the Sit & Go tournaments.
 // It is the only place where chips cross between a wallet and a table.
@@ -33,6 +35,8 @@ export function createManager(io) {
   const where = new Map(); // user id -> Map(game id -> 'cash' | 'sng'): every game a player is in
   const online = new Map(); // user id -> Set of socket ids
   const offlineTimers = new Map();
+  // Seats the admin hands to the AI bot (see bots.js). It tells the seat's owner what it decided.
+  const bots = createBots({ brain: createBrain(), notify: (uid, msg) => io.to(room(uid)).emit('bot:decision', msg) });
 
   const room = (uid) => `user:${uid}`;
   const watchRoom = (id) => `watch:${id}`;
@@ -74,6 +78,7 @@ export function createManager(io) {
     for (const p of table.seated) io.to(room(p.uid)).emit('table:state', table.publicState(p.uid));
     io.to(watchRoom(table.id)).emit('table:state', table.publicState(null));
     scheduleLobby();
+    bots.onTableChange(table); // a bot seat to act? it decides now
   }
 
   let lobbyTimer = null;
@@ -116,7 +121,10 @@ export function createManager(io) {
 
   const fail = (error) => ({ ok: false, error });
   // Hands are saved in the background: a slow or failed save never holds up the game.
-  const saveHand = (hand) => Hand.create(hand).catch((err) => console.error('could not save a hand', err.message));
+  const saveHand = (hand) => {
+    bots.rememberHand(hand); // bot seats keep notes on the session
+    return Hand.create(hand).catch((err) => console.error('could not save a hand', err.message));
+  };
 
   // ---- table chat ----
   const chats = new Map(); // table id -> the last messages said there
@@ -304,7 +312,8 @@ export function createManager(io) {
     for (let i = 0; i < TABLES_PER_STAKE; i++) makeCashTable(sb, bb, 'ABCDEFGH'[i]);
   }
 
-  async function cashSit(uid, { tableId, seat, amount }) {
+  async function cashSit(uid, { tableId, seat, amount, asBot }) {
+    if (asBot && !bots.status().ready) return fail('The AI bot is not set up: add ANTHROPIC_API_KEY on the server');
     const table = tables.get(tableId);
     if (!table || table.kind !== 'cash') return fail('Table not found');
     amount = Math.floor(Number(amount));
@@ -328,6 +337,7 @@ export function createManager(io) {
       return fail('That seat was just taken');
     }
     seatTaken(uid, tableId);
+    if (asBot) bots.setBot(table, uid, true);
     io.to(room(uid)).emit('table:state', table.publicState(uid));
     emitMe(uid);
     return { ok: true };
@@ -339,6 +349,7 @@ export function createManager(io) {
     if (!id) return fail('You are not seated');
     const table = tables.get(id);
     release(uid, id);
+    bots.forget(id, uid);
     const stack = table ? table.removePlayer(uid) : 0;
     await wallet.fromTable(uid, id, stack, 'cash_cashout');
     if (message) io.to(room(uid)).emit('notice', table ? `${table.name}: ${message}` : message);
@@ -380,7 +391,8 @@ export function createManager(io) {
   }
   ensureOpenSngs();
 
-  async function sngRegister(uid, { id }) {
+  async function sngRegister(uid, { id, asBot }) {
+    if (asBot && !bots.status().ready) return fail('The AI bot is not set up: add ANTHROPIC_API_KEY on the server');
     const s = sngs.get(id);
     if (!s || s.status !== 'registering') return fail('That tournament is no longer open');
     const refused = claim(uid, id, 'sng');
@@ -396,7 +408,7 @@ export function createManager(io) {
       emitMe(uid);
       return fail('That tournament just filled up');
     }
-    s.players.push(playerInfo(user));
+    s.players.push({ ...playerInfo(user), bot: !!asBot });
     emitMe(uid);
     if (s.players.length === s.size) startSng(s);
     scheduleLobby();
@@ -488,6 +500,7 @@ export function createManager(io) {
     // Seats are drawn at random.
     const order = [...s.players].sort(() => crypto.randomInt(3) - 1);
     order.forEach((p, i) => table.addPlayer(p, i, SNG_STACK));
+    for (const p of s.players) if (p.bot) bots.setBot(table, p.uid, true);
     for (const p of s.players) {
       seatTaken(p.uid, s.id);
       io.to(room(p.uid)).emit('table:state', table.publicState(p.uid));
@@ -499,6 +512,7 @@ export function createManager(io) {
   function finishPlayer(s, p, place, prize, stays = false) {
     s.results.push({ uid: p.uid, name: p.name, place, prize });
     release(p.uid, s.id);
+    bots.forget(s.id, p.uid);
     wallet
       .fromTable(p.uid, s.id, prize, 'sng_prize')
       .then(() => emitMe(p.uid))
@@ -546,7 +560,7 @@ export function createManager(io) {
       const table = tables.get(id);
       if (!table?.seatOf(uid)) continue;
       table.setConnected(uid, false);
-      if (type === 'cash') atCash = true;
+      if (type === 'cash' && !bots.isBot(id, uid)) atCash = true;
     }
     // A cash player who stays away gets their chips back and frees the seat.
     // A tournament player stays in and is folded until they return.
@@ -554,7 +568,7 @@ export function createManager(io) {
       offlineTimers.set(uid, setTimeout(() => {
         offlineTimers.delete(uid);
         if (online.has(uid)) return;
-        for (const [id, type] of [...gamesOf(uid)]) if (type === 'cash') standUp(uid, id).catch(() => {});
+        for (const [id, type] of [...gamesOf(uid)]) if (type === 'cash' && !bots.isBot(id, uid)) standUp(uid, id).catch(() => {});
       }, OFFLINE_LIMIT_MS));
     }
     scheduleLobby();
@@ -597,6 +611,14 @@ export function createManager(io) {
     show: (uid, { tableId, which }) => tableOf(uid, tableId)?.show(uid, which),
     rabbit: (uid, { tableId }) => tableOf(uid, tableId)?.rabbit(uid) || { ok: false, error: 'Take a seat to rabbit hunt' },
     sitOut: (uid, { tableId, on }) => tableOf(uid, tableId)?.setSittingOut(uid, !!on),
+    botSet: (uid, { tableId, on }) => {
+      const table = tableOf(uid, tableId);
+      if (!table) return fail('You are not seated there');
+      if (on && !bots.status().ready) return fail('The AI bot is not set up: add ANTHROPIC_API_KEY on the server');
+      bots.setBot(table, uid, !!on);
+      return { ok: true };
+    },
+    bots,
     summary: () => ({
       online: online.size,
       seated: [...tables.values()].reduce((n, t) => n + t.seated.length, 0),
