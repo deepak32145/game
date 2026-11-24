@@ -7,13 +7,18 @@ import Anthropic from '@anthropic-ai/sdk';
 // - a strict JSON answer, so there is nothing to parse but the decision.
 // The API key comes only from the server's environment (ANTHROPIC_API_KEY), never from a client.
 
-export const BOT_MODEL = 'claude-opus-5-5';
+// The Claude models the admin can pick, with their prices in US dollars per million tokens
+// (cache writes cost 1.25x input, cache reads 0.1x). Haiku is by far the cheapest.
+export const MODELS = {
+  haiku: { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', price: { input: 0.1, cacheWrite: 0.125, cacheRead: 0.01, output: 0.5 } },
+  sonnet: { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', price: { input: 2, cacheWrite: 2.5, cacheRead: 0.2, output: 10 } },
+  opus: { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', price: { input: 4, cacheWrite: 5, cacheRead: 0.2, output: 20 } },
+};
+export const BOT_MODEL = MODELS.opus.id;
 const EFFORT = 'low';
 const MAX_TOKENS = 1500; // thinking counts towards this; low effort stays well under it
 const MAX_TOKENS_BIG = 4000; // medium effort, for big pots, thinks a little longer
 
-// Claude Opus 5.5 prices in US dollars per million tokens (cache writes cost 1.25x input).
-const PRICE = { input: 4, cacheWrite: 5, cacheRead: 0.2, output: 20 };
 
 const DECISION_SCHEMA = {
   type: 'object',
@@ -71,13 +76,13 @@ export function systemPrompt(playbook) {
   return RULES + (text ? PLAYBOOK_HEADER + text : '');
 }
 
-export function costOf(usage) {
+export function costOf(usage, price = MODELS.opus.price) {
   if (!usage) return 0;
   return (
-    ((usage.input_tokens || 0) * PRICE.input +
-      (usage.cache_creation_input_tokens || 0) * PRICE.cacheWrite +
-      (usage.cache_read_input_tokens || 0) * PRICE.cacheRead +
-      (usage.output_tokens || 0) * PRICE.output) /
+    ((usage.input_tokens || 0) * price.input +
+      (usage.cache_creation_input_tokens || 0) * price.cacheWrite +
+      (usage.cache_read_input_tokens || 0) * price.cacheRead +
+      (usage.output_tokens || 0) * price.output) /
     1e6
   );
 }
@@ -91,16 +96,17 @@ export function createBrain(apiKey = process.env.ANTHROPIC_API_KEY) {
     model: BOT_MODEL,
 
     // Returns { action, amount, reason, ms, usage, costUsd, model } or throws.
-    async decide({ system, prompt, timeoutMs, effort = EFFORT }) {
+    async decide({ system, prompt, timeoutMs, effort = EFFORT, model = 'opus' }) {
       if (!client) throw new Error('No ANTHROPIC_API_KEY on the server');
+      const m = MODELS[model] || MODELS.opus;
       const started = Date.now();
       const response = await client.beta.messages.create(
         {
-          model: BOT_MODEL,
+          model: m.id,
           max_tokens: effort === 'low' ? MAX_TOKENS : MAX_TOKENS_BIG,
-          // If a safety check declines the request, the API answers with a fallback model instead.
-          betas: ['server-side-fallback-2026-07-01'],
-          fallbacks: 'default',
+          // On Opus, if a safety check declines the request, the API answers with a fallback model
+          // instead. Other models decline outright, and the bot's engine plays that turn.
+          ...(model === 'opus' ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
           system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
           output_config: { effort, format: { type: 'json_schema', schema: DECISION_SCHEMA } },
           messages: [{ role: 'user', content: prompt }],
@@ -118,7 +124,7 @@ export function createBrain(apiKey = process.env.ANTHROPIC_API_KEY) {
         reason: String(out.reason || '').slice(0, 160),
         ms,
         usage: response.usage,
-        costUsd: costOf(response.usage),
+        costUsd: costOf(response.usage, m.price),
         model: response.model,
       };
     },

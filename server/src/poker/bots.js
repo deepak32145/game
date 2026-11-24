@@ -1,6 +1,6 @@
 import { BotSettings, BotDecision } from '../models.js';
 import crypto from 'crypto';
-import { systemPrompt } from './botBrain.js';
+import { systemPrompt, MODELS } from './botBrain.js';
 import { readHand } from './botRead.js';
 import { decide as decideLocally, STYLES } from './botEngine.js';
 
@@ -94,7 +94,7 @@ export function createBots({ brain, notify }) {
   const seats = new Set(); // tableId|uid of every seat the bot plays
   const busy = new Map(); // tableId -> the turn being decided, so each turn is decided once
   const sessions = new Map(); // tableId|uid -> what the bot remembers of this session
-  let settings = { playbook: DEFAULT_PLAYBOOK, dailyBudgetUsd: 3, mode: 'engine', style: 'aggressive' };
+  let settings = { playbook: DEFAULT_PLAYBOOK, dailyBudgetUsd: 3, mode: 'engine', style: 'aggressive', model: 'haiku' };
   const spend = { day: today(), usd: 0, decisions: 0, ms: 0, fallbacks: 0 };
 
   // Load the saved playbook and today's spend so far.
@@ -107,6 +107,7 @@ export function createBots({ brain, notify }) {
           dailyBudgetUsd: saved.dailyBudgetUsd ?? 3,
           mode: MODES.includes(saved.mode) ? saved.mode : 'engine',
           style: STYLES[saved.style] ? saved.style : 'aggressive',
+          model: MODELS[saved.model] ? saved.model : 'haiku',
         };
       }
       const start = new Date(`${today()}T00:00:00Z`);
@@ -333,6 +334,15 @@ export function createBots({ brain, notify }) {
       mainOpponent: others.length ? statsOf(others[0].seat) : null,
       hadInitiative: prevBets.length > 0 && prevBets[prevBets.length - 1].seat === p.seat,
       checkedToMe: streetBets.length === 0,
+      iCheckedThisStreet: onStreet.some((a) => a.seat === p.seat && a.t === 'check'),
+      // Last street (after the flop) they bet and I only called: a float, ready to take it away.
+      floated: (() => {
+        if (!prevStreet || prevStreet === 'preflop') return false;
+        const prev = acts.filter((a) => a.st === prevStreet);
+        const lastAgg = prev.filter(aggressive).pop();
+        const mine = prev.filter((a) => a.seat === p.seat).pop();
+        return !!lastAgg && lastAgg.seat !== p.seat && mine?.t === 'call';
+      })(),
       roll: crypto.randomInt(1, 101),
     };
   }
@@ -367,6 +377,9 @@ export function createBots({ brain, notify }) {
   async function play(table, p, turn) {
     const started = Date.now();
     const view = table.publicState(p.uid);
+    // The board and street as they were when deciding (the table moves on once the move is played).
+    const boardNow = [...table.board];
+    const streetNow = table.street;
     rollDay();
     let decision = null;
     let fallback = '';
@@ -378,7 +391,7 @@ export function createBots({ brain, notify }) {
       else if (spend.usd >= settings.dailyBudgetUsd) fallback = `daily budget of $${settings.dailyBudgetUsd} reached`;
       else {
         try {
-          decision = await brain.decide({ system: systemPrompt(settings.playbook), prompt: describe(table, p, view), effort, timeoutMs: effort === 'low' ? DECIDE_TIMEOUT_MS : BIG_DECIDE_TIMEOUT_MS });
+          decision = await brain.decide({ system: systemPrompt(settings.playbook), prompt: describe(table, p, view), effort, model: settings.model, timeoutMs: effort === 'low' ? DECIDE_TIMEOUT_MS : BIG_DECIDE_TIMEOUT_MS });
         } catch (err) {
           fallback = err.message?.slice(0, 120) || 'Claude did not answer';
         }
@@ -416,9 +429,9 @@ export function createBots({ brain, notify }) {
       tableId: table.id,
       tableName: table.name,
       handNo: table.handNo,
-      street: view.street,
+      street: streetNow,
       cards: p.cards,
-      board: [...view.board],
+      board: boardNow,
       pot: view.pot,
       toCall: view.toCall,
       action: move.type,
@@ -442,8 +455,9 @@ export function createBots({ brain, notify }) {
       // The engine needs nothing, so the bot is ready unless it must use Claude and has no key.
       ready: settings.mode !== 'claude' || brain.ready(),
       claudeReady: brain.ready(),
-      model: settings.mode === 'engine' ? 'Free engine' : settings.mode === 'hybrid' ? `Engine + ${brain.model}` : brain.model,
+      model: settings.mode === 'engine' ? 'Free engine' : settings.mode === 'hybrid' ? `Engine + ${MODELS[settings.model].label}` : MODELS[settings.model].label,
       mode: settings.mode,
+      claudeModel: settings.model,
       style: settings.style,
       playbook: settings.playbook,
       dailyBudgetUsd: settings.dailyBudgetUsd,
@@ -452,7 +466,8 @@ export function createBots({ brain, notify }) {
     };
   }
 
-  async function saveSettings({ playbook, dailyBudgetUsd, mode, style }) {
+  async function saveSettings({ playbook, dailyBudgetUsd, mode, style, model }) {
+    if (MODELS[model]) settings.model = model;
     if (typeof playbook === 'string') settings.playbook = playbook.slice(0, 6000);
     if (MODES.includes(mode)) settings.mode = mode;
     if (STYLES[style]) settings.style = style;

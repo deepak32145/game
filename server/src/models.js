@@ -97,6 +97,7 @@ const botSettingsSchema = new mongoose.Schema({
   dailyBudgetUsd: { type: Number, default: 3 },
   mode: { type: String, default: 'engine' }, // engine | hybrid | claude
   style: { type: String, default: 'aggressive' }, // tight | balanced | aggressive
+  model: { type: String, default: 'haiku' }, // haiku | sonnet | opus: the Claude model, when Claude plays
 });
 
 // One decision the bot made, for the admin to review. Deleted by itself after two weeks.

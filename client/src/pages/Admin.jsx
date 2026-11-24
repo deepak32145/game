@@ -165,6 +165,7 @@ function BotPanel({ token }) {
   const [budget, setBudget] = useState('');
   const [mode, setMode] = useState('engine');
   const [style, setStyle] = useState('aggressive');
+  const [model, setModel] = useState('haiku');
   const [decisions, setDecisions] = useState(null);
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
@@ -178,6 +179,7 @@ function BotPanel({ token }) {
           setBudget(String(s.dailyBudgetUsd));
           setMode(s.mode || 'engine');
           setStyle(s.style || 'aggressive');
+          setModel(s.claudeModel || 'haiku');
         }
       })
       .catch((e) => setError(e.message));
@@ -192,7 +194,7 @@ function BotPanel({ token }) {
   const save = async () => {
     setError('');
     try {
-      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget), mode, style } });
+      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget), mode, style, model } });
       setStatus(s);
       setSaved('Saved. The bot uses it from its next decision.');
       setTimeout(() => setSaved(''), 3000);
@@ -233,15 +235,26 @@ function BotPanel({ token }) {
             {[
               ['engine', '⚙️ Free engine', 'Rules on the server: hand strength, draws, equity, pot odds, position and how each opponent plays. Costs nothing.'],
               ['hybrid', '⚙️+🧠 Hybrid', 'The engine plays everyday spots; Claude decides big pots and big calls. Small cost.'],
-              ['claude', '🧠 Claude every turn', 'Claude Opus decides every move. Best reads, about $0.01 a move.'],
+              ['claude', '🧠 Claude every turn', 'Claude decides every move and improvises from the whole session.'],
             ].map(([k, label, hint]) => (
               <button key={k} type="button" className={`seg-opt ${mode === k ? 'on' : ''}`} onClick={() => setMode(k)} title={hint}>
                 {label}
               </button>
             ))}
           </div>
-          <small className="muted">{{ engine: 'Rules on the server: hand strength, draws, equity, pot odds, position and how each opponent plays. Costs nothing.', hybrid: 'The engine plays everyday spots; Claude decides big pots and big calls. Small cost.', claude: 'Claude Opus decides every move. Best reads, about $0.01 a move.' }[mode]}{mode !== 'engine' && !status.claudeReady ? ' Needs an API key on the server.' : ''}</small>
+          <small className="muted">{{ engine: 'Rules on the server: hand strength, draws, equity, pot odds, position and how each opponent plays. Costs nothing.', hybrid: 'The engine plays everyday spots; Claude decides big pots and big calls. Small cost.', claude: 'Claude decides every move and improvises from the whole session.' }[mode]}{mode !== 'engine' && !status.claudeReady ? ' Needs an API key on the server.' : ''}</small>
         </div>
+        {mode !== 'engine' && (
+          <div className="bot-choice">
+            <span><b>Claude model</b> <small className="muted">Which Claude plays its turns.</small></span>
+            <div className="seg">
+              {[['haiku', 'Haiku · cheapest'], ['sonnet', 'Sonnet'], ['opus', 'Opus · strongest']].map(([k, label]) => (
+                <button key={k} type="button" className={`seg-opt ${model === k ? 'on' : ''}`} onClick={() => setModel(k)}>{label}</button>
+              ))}
+            </div>
+            <small className="muted">{{ haiku: 'About $0.0005 a move: a whole session costs a few cents.', sonnet: 'About $0.004 a move.', opus: 'About $0.006 a move, the deepest reads.' }[model]}</small>
+          </div>
+        )}
         <div className="bot-choice">
           <span><b>Engine style</b> <small className="muted">How boldly the engine plays.</small></span>
           <div className="seg">

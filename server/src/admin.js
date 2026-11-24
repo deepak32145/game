@@ -89,8 +89,8 @@ adminRouter.get('/bot', (_req, res) => {
 
 adminRouter.post('/bot', async (req, res) => {
   if (!hub.manager) return res.status(503).json({ error: 'The game server is starting' });
-  const { playbook, dailyBudgetUsd, mode, style } = req.body || {};
-  res.json(await hub.manager.bots.saveSettings({ playbook, dailyBudgetUsd, mode, style }));
+  const { playbook, dailyBudgetUsd, mode, style, model } = req.body || {};
+  res.json(await hub.manager.bots.saveSettings({ playbook, dailyBudgetUsd, mode, style, model }));
 });
 
 adminRouter.get('/bot/decisions', async (req, res) => {

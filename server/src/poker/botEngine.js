@@ -76,33 +76,40 @@ function preflop(sit, style) {
   const stackBb = sit.stack / bb;
   const facing = sit.myBet + toCall; // the bet to match
   const raises = sit.preRaises; // raises so far this hand (blinds don't count)
+  const hu = sit.players === 2;
   const late = ['BTN', 'CO', 'BTN/SB'].includes(sit.pos);
   const raiser = profile(sit.lastRaiser);
   const s = style.shift;
   const name = `${hole.join(' ')} (score ${score})`;
-  const looseTable = (sit.tableVpip ?? 0) >= 0.5; // most players here call too much: no point stealing
-  const bluffCandidate = suited && ((hi === 12 && lo <= 3) || (hi - lo === 1 && lo >= 3 && hi <= 9));
+  const looseTable = !hu && (sit.tableVpip ?? 0) >= 0.5; // most players here call too much: no point stealing
+  // Hands that make good bluffs: they block big hands or play well when called.
+  const bluffCandidate = suited ? hi === 12 || hi - lo <= 2 || hi >= 10 : hi === 12 && lo >= 6;
 
-  // Short-stacked: shove or fold.
+  // Short-stacked: shove or fold (wider heads-up, where any ace or king is strong).
   if (stackBb <= 15) {
     if (raises === 0) {
-      const pushAt = 5 + (stackBb / 15) * 5 - (late || sit.pos === 'SB' ? 1.5 : 0) + s;
+      const pushAt = (hu ? 1 : 5) + (stackBb / 15) * 5 - (late || sit.pos === 'SB' ? 1.5 : 0) + s;
       if (score >= pushAt) return bet(sit.maxRaiseTo, `short stack shove with ${name}`);
       return toCall === 0 ? check('short stack, free look') : fold(`short stack, ${name} too weak to shove`);
     }
-    const callAt = (raiser === 'maniac' || raiser === 'station' ? 9 : 10) + s;
+    const callAt = (hu ? 6 : 9) + (raiser === 'maniac' || raiser === 'station' ? 0 : 1) + s;
     if (score >= callAt) return sit.canRaise ? bet(sit.maxRaiseTo, `short stack, all-in with ${name}`) : call(`short stack call with ${name}`);
     return fold(`short stack, ${name} not good enough against a raise`);
   }
 
   // Nobody has raised: open, isolate limpers, or check the big blind.
   if (raises === 0) {
-    const openAt = ({ UTG: 8, MP: 7, CO: 6, BTN: 4, 'BTN/SB': 3, SB: 6, BB: 7 }[sit.pos] ?? 7) + s + (sit.limpers ? 1 : 0) + (looseTable ? 2 : 0);
-    if (score >= openAt || (late && !looseTable && bluffCandidate && roll <= 40 * style.bluff)) {
-      const open = looseTable ? 3.5 : sit.players === 2 ? 2.2 : roll <= 33 ? 2.2 : roll <= 80 ? 2.5 : 3;
+    // Heads-up the button opens most hands; six-handed it depends on position.
+    const openAt = (hu ? 2 : { UTG: 8, MP: 7, CO: 6, BTN: 4, SB: 6, BB: 7 }[sit.pos] ?? 7) + s + (sit.limpers ? 1 : 0) + (looseTable ? 2 : 0);
+    if (score >= openAt || (late && !looseTable && bluffCandidate && roll <= 45 * style.bluff)) {
+      const open = looseTable ? 3.5 : hu ? (roll <= 50 ? 2 : 2.5) : roll <= 33 ? 2.2 : roll <= 80 ? 2.5 : 3;
       return bet(sized(sit, (open + sit.limpers) * bb), sit.limpers ? `isolation raise with ${name}` : `open-raise from ${sit.pos} with ${name}`);
     }
-    if (toCall === 0) return check(`${name}: check the big blind`);
+    // In the big blind after a limp: raise good hands and some bluffs, check the rest.
+    if (toCall === 0) {
+      if (sit.canRaise && (score >= 9 + s || (bluffCandidate && roll <= 20 * style.bluff))) return bet(sized(sit, (3 + sit.limpers) * bb), `raise the limp with ${name}`);
+      return check(`${name}: check the big blind`);
+    }
     if (sit.pos === 'SB' && toCall <= bb / 2 && score >= 4 + s) return call(`complete the small blind with ${name}`);
     return fold(`${name} too weak to open from ${sit.pos}`);
   }
@@ -110,21 +117,27 @@ function preflop(sit, style) {
   const share = toCall / sit.stack; // how much of my stack the call is
   // Facing one raise.
   if (raises === 1) {
-    const valueAt = (raiser === 'maniac' || raiser === 'station' ? 10 : raiser === 'nit' ? 12 : 11) + s;
-    let callAt = (late || sit.pos === 'BB' ? 7 : 8) + (raiser === 'nit' ? 1 : raiser === 'maniac' ? -1 : 0) + s;
-    if (sit.pos === 'BB' && facing <= 3 * bb) callAt -= 1;
-    if (share >= 0.35) return score >= valueAt ? (sit.canRaise ? bet(sit.maxRaiseTo, `all-in with ${name}`) : call(`call the big raise with ${name}`)) : fold(`${name} not strong enough for a big raise`);
-    if (score >= valueAt && sit.canRaise) return bet(sized(sit, facing * (sit.inPosition ? 3 : 4)), `3-bet for value with ${name}`);
-    if (bluffCandidate && sit.canRaise && raiser !== 'station' && roll <= 22 * style.bluff) return bet(sized(sit, facing * (sit.inPosition ? 3 : 4)), `3-bet bluff with ${name}`);
-    if (score >= callAt || (pair && share <= 0.08)) return call(pair && score < callAt ? `set-mine with ${name}` : `call the raise with ${name}`);
+    const loose = raiser === 'maniac' || raiser === 'station' || hu;
+    const valueAt = (hu ? 9 : loose ? 10 : raiser === 'nit' ? 12 : 11) + s;
+    // Defend wider when the price is good: in the big blind, heads-up, or against a small raise.
+    let callAt = (hu ? 4 : late || sit.pos === 'BB' ? 6 : 8) + (raiser === 'nit' ? 2 : raiser === 'maniac' ? -1 : 0) + s;
+    if (facing <= 2.5 * bb) callAt -= 1;
+    if (facing >= 4 * bb) callAt += 2;
+    if (share >= 0.35) {
+      return score >= valueAt - (hu ? 2 : 0) ? (sit.canRaise ? bet(sit.maxRaiseTo, `all-in with ${name}`) : call(`call the big raise with ${name}`)) : fold(`${name} not strong enough for a big raise`);
+    }
+    const threeBet = sized(sit, facing * (sit.inPosition ? 3 : hu ? 3.5 : 4));
+    if (score >= valueAt && sit.canRaise) return bet(threeBet, `3-bet for value with ${name}`);
+    if (bluffCandidate && sit.canRaise && raiser !== 'station' && roll <= (hu ? 30 : 20) * style.bluff) return bet(threeBet, `3-bet bluff with ${name}`);
+    if (score >= callAt || (pair && share <= 0.08)) return call(pair && score < callAt ? `set-mine with ${name}` : `defend with ${name}`);
     return fold(`${name} too weak against a raise`);
   }
 
   // Facing a 3-bet or more.
-  const fourAt = (raiser === 'maniac' ? 12 : 13) + s;
+  const fourAt = (hu ? 10 : raiser === 'maniac' ? 12 : 13) + s;
   if (score >= fourAt) return sit.canRaise ? bet(sized(sit, facing * 2.3), `4-bet with ${name}`) : call(`call with ${name}`);
-  if (sit.iRaised && bluffCandidate && hi === 12 && sit.canRaise && roll <= 8 * style.bluff) return bet(sized(sit, facing * 2.3), `4-bet bluff with ${name}`);
-  if (score >= 11 + s && share <= 0.25) return call(`call the re-raise with ${name}`);
+  if (sit.iRaised && bluffCandidate && hi >= 11 && sit.canRaise && roll <= (hu ? 14 : 8) * style.bluff) return bet(sized(sit, facing * 2.3), `4-bet bluff with ${name}`);
+  if (score >= (hu ? 6 : 10) + s && share <= 0.25) return call(`call the re-raise with ${name}`);
   return fold(`${name} not strong enough against a re-raise`);
 }
 
@@ -134,35 +147,51 @@ function postflop(sit, style) {
   const { hole, board, pot, toCall, roll, street } = sit;
   const f = features(hole, board);
   const opps = Math.max(1, sit.opponents);
+  const hu = opps === 1;
   const eq = equityVsRandom(hole, board, opps) / 100;
   const fair = 1 / (opps + 1);
   const strength = clamp((eq - fair) / (1 - fair), 0, 1); // 0 = average hand, 1 = the nuts
   const strongDraw = (f.flushDraw || f.oesd) && street !== 'river';
-  const anyDraw = strongDraw || ((f.gutshot || f.overcards || f.backdoor) && street !== 'river');
+  const someEquity = (f.gutshot || f.overcards || f.backdoor) && street !== 'river';
   const main = profile(sit.aggressor || sit.mainOpponent);
-  const bluff = style.bluff * (main === 'station' ? 0.3 : main === 'nit' ? 1.4 : 1) / opps;
+  const bluff = (style.bluff * (main === 'station' ? 0.3 : main === 'nit' ? 1.4 : 1)) / opps;
   const what = `${f.made}${f.draws.length ? ` + ${f.draws[0]}` : ''}`;
   const potBet = (x) => sized(sit, sit.myBet + pot * x);
 
   // ---- nobody has bet: check or bet ----
   if (toCall === 0) {
     if (!sit.canRaise) return check('nothing to bet');
-    const valueAt = (main === 'station' ? 0.3 : 0.4) + (opps - 1) * 0.02;
+    const valueAt = (main === 'station' ? 0.3 : hu ? 0.32 : 0.4) + (opps - 1) * 0.02;
     if (strength >= 0.9) {
-      if (!f.wet && street !== 'river' && roll <= 25 * style.bluff) return check(`slow-play ${what}`);
+      // Out of position, check some monsters to check-raise; in position, slow-play some on dry boards.
+      if (!sit.inPosition && street !== 'river' && roll <= 30 * style.bluff) return check(`check to check-raise with ${what}`);
+      if (!f.wet && street !== 'river' && roll <= 20 * style.bluff) return check(`slow-play ${what}`);
       if (street === 'river' && roll <= 30) return bet(potBet(1.25), `overbet the river with ${what}`);
       return bet(potBet(f.wet ? 0.75 : 0.55), `value bet ${what} (${pct(eq)})`);
     }
-    if (strength >= valueAt) return bet(potBet(main === 'station' || (sit.tableVpip ?? 0) >= 0.5 ? 0.8 : street === 'flop' && !f.wet ? 0.4 : 0.66), `value bet ${what} (${pct(eq)})`);
-    if (strongDraw && roll <= 60 * bluff * opps ** 0.5) return bet(potBet(0.6), `semi-bluff ${f.draws[0]}`);
+    if (strength >= valueAt) {
+      if (!sit.inPosition && (strength >= 0.6 || strongDraw) && street !== 'river' && roll <= 20 * style.bluff) return check(`check to check-raise with ${what}`);
+      return bet(potBet(main === 'station' || (sit.tableVpip ?? 0) >= 0.5 ? 0.8 : street === 'flop' && !f.wet ? 0.4 : 0.66), `value bet ${what} (${pct(eq)})`);
+    }
+    // Draws: bet them as semi-bluffs, or check planning to check-raise.
+    if (strongDraw) {
+      if (!sit.inPosition && roll <= 30 * style.bluff) return check(`check to check-raise ${f.draws[0]}`);
+      if (roll <= 65 * bluff * opps ** 0.5) return bet(potBet(0.6), `semi-bluff ${f.draws[0]}`);
+    }
+    // We called a bet in position last street and they've checked now: they gave up, take it.
+    if (sit.floated && sit.inPosition && roll <= (street === 'river' ? 55 : 75) * Math.min(1.3, bluff * opps)) {
+      return bet(potBet(street === 'river' ? 0.66 : 0.5), 'they gave up after my float: take the pot');
+    }
     if (sit.hadInitiative) {
-      const freq = street === 'flop' ? (f.wet ? 35 : 55) : street === 'turn' ? (anyDraw ? 55 : 35) : strength < 0.15 ? 28 : 0;
+      const freq = street === 'flop' ? (f.wet ? 40 : hu ? 58 : 55) : street === 'turn' ? (someEquity ? 60 : 40) : strength < 0.15 ? (hu ? 35 : 28) : 0;
       if (roll <= freq * bluff) {
         const size = street === 'flop' ? (f.wet ? 0.66 : 0.33) : street === 'turn' ? 0.66 : 0.75;
         return bet(potBet(size), street === 'flop' ? `c-bet ${f.wet ? 'wet' : 'dry'} board` : street === 'turn' ? 'second barrel' : 'river bluff');
       }
-    } else if (sit.inPosition && sit.checkedToMe && opps <= 2 && roll <= (street === 'river' ? 15 : 30) * bluff) {
+    } else if (sit.checkedToMe && sit.inPosition && opps <= 2 && roll <= (street === 'river' ? 25 : 45) * bluff) {
       return bet(potBet(0.5), 'stab when checked to');
+    } else if (!sit.inPosition && hu && (someEquity || strength >= 0.25) && roll <= 12 * style.bluff) {
+      return bet(potBet(0.4), `lead out with ${what}`);
     }
     return check(`check ${what} (${pct(eq)})`);
   }
@@ -171,23 +200,35 @@ function postflop(sit, style) {
   const potBefore = pot - toCall > 0 ? pot - toCall : pot;
   const betRatio = clamp(toCall / Math.max(1, potBefore), 0, 1.5);
   // Their betting range is stronger than random cards: weigh my hand against the hands this player
-  // would bet here (pairs, draws, and bluffs as often as their style suggests).
-  let bluffRate = { maniac: 0.55, nit: 0.12, station: 0.08 }[main] ?? 0.3;
+  // would bet here (pairs, draws, and bluffs as often as their style suggests). Heads-up people bet wider.
+  let bluffRate = { maniac: 0.55, nit: 0.12, station: 0.08 }[main] ?? (hu ? 0.42 : 0.3);
   if (betRatio > 1) bluffRate *= 0.8;
   if (street === 'river') bluffRate *= 0.8;
   const reraised = sit.streetRaises >= 2;
   if (reraised) bluffRate *= 0.35;
   const adj = equityVsBettor(hole, board, opps, { bluffRate, minCat: reraised ? 2 : 1 }) / 100;
   let need = toCall / (pot + toCall);
-  if (strongDraw && sit.stack > toCall * 4) need -= 0.06; // implied odds: more to win when the draw comes in
+  if ((strongDraw || someEquity) && sit.stack > toCall * 4) need -= strongDraw ? 0.06 : 0.03; // implied odds
+  const checkedFirst = sit.iCheckedThisStreet; // they bet into my check: a check-raise spot
+  const raiseTo = sized(sit, (sit.myBet + toCall) * (checkedFirst ? 3 : 2.8));
 
+  // Big hands raise (sometimes just call to trap, mostly on the flop).
   if (sit.canRaise && (adj >= 0.7 || strength >= 0.92)) {
-    if (street === 'flop' && roll <= 20) return call(`slow-play ${what}, just call`);
-    return bet(sized(sit, (sit.myBet + toCall) * 3), `raise for value with ${what} (${pct(adj)} vs their range)`);
+    if (street === 'flop' && !checkedFirst && roll <= 20) return call(`slow-play ${what}, just call`);
+    return bet(raiseTo, `${checkedFirst ? 'check-raise' : 'raise'} for value with ${what} (${pct(adj)} vs their range)`);
   }
-  if (sit.canRaise && strongDraw && sit.streetRaises <= 1 && roll <= 25 * bluff * opps) {
-    return bet(sized(sit, (sit.myBet + toCall) * 3), `semi-bluff raise with ${f.draws[0]}`);
+  // Draws: raise as a semi-bluff (more after checking), else call if the price is right.
+  if (sit.canRaise && strongDraw && !reraised && roll <= (checkedFirst ? 40 : 25) * bluff * opps) {
+    return bet(raiseTo, `${checkedFirst ? 'check-raise' : 'raise'} semi-bluff with ${f.draws[0]}`);
+  }
+  // Now and then raise a weaker hand with some equity as a bluff, heads-up against a player who can fold.
+  if (sit.canRaise && hu && !reraised && street !== 'river' && someEquity && main !== 'station' && roll <= 8 * style.bluff) {
+    return bet(raiseTo, `${checkedFirst ? 'check-raise' : 'raise'} bluff with ${what}`);
   }
   if (adj >= need) return call(`call with ${what}: ${pct(adj)} vs their range, ${pct(need)} needed`);
+  // Float: in position heads-up against a modest bet, call with some equity planning to take it away later.
+  if (hu && sit.inPosition && street !== 'river' && betRatio <= 0.75 && (someEquity || strength >= 0.2) && main !== 'nit' && roll <= 45 * style.bluff) {
+    return call(`float with ${what}, take it away later`);
+  }
   return fold(`fold ${what}: ${pct(adj)} vs their range, ${pct(need)} needed`);
 }
