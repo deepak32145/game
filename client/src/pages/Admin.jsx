@@ -163,6 +163,8 @@ function BotPanel({ token }) {
   const [status, setStatus] = useState(null);
   const [playbook, setPlaybook] = useState('');
   const [budget, setBudget] = useState('');
+  const [mode, setMode] = useState('engine');
+  const [style, setStyle] = useState('aggressive');
   const [decisions, setDecisions] = useState(null);
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
@@ -174,6 +176,8 @@ function BotPanel({ token }) {
         if (first) {
           setPlaybook(s.playbook);
           setBudget(String(s.dailyBudgetUsd));
+          setMode(s.mode || 'engine');
+          setStyle(s.style || 'aggressive');
         }
       })
       .catch((e) => setError(e.message));
@@ -188,7 +192,7 @@ function BotPanel({ token }) {
   const save = async () => {
     setError('');
     try {
-      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget) } });
+      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget), mode, style } });
       setStatus(s);
       setSaved('Saved. The bot uses it from its next decision.');
       setTimeout(() => setSaved(''), 3000);
@@ -203,32 +207,55 @@ function BotPanel({ token }) {
     <section className="bot-panel">
       {!status.ready && (
         <div className="notice">
-          The bot is switched off: there is no Anthropic API key on the server. Add <code>ANTHROPIC_API_KEY=…</code> to
+          "Claude every turn" needs an Anthropic API key on the server, and there is none. Pick the free engine, or add the key: Add <code>ANTHROPIC_API_KEY=…</code> to
           <code> server/.env.production</code> on your computer and deploy again.
         </div>
       )}
       <div className="admin-summary">
         <div><span className="muted small">Status</span><b className={status.ready ? 'plus' : 'minus'}>{status.ready ? 'Ready' : 'No API key'}</b></div>
-        <div><span className="muted small">Model</span><b>{status.model}</b></div>
+        <div><span className="muted small">Brain</span><b>{status.model}</b></div>
         <div><span className="muted small">Spent today</span><b>{usd(today.spentUsd)} <small className="muted">of {usd(status.dailyBudgetUsd)}</small></b></div>
         <div><span className="muted small">Decisions today</span><b>{today.decisions}</b></div>
         <div><span className="muted small">Average answer</span><b>{today.avgMs ? `${(today.avgMs / 1000).toFixed(1)} s` : '—'}</b></div>
-        <div><span className="muted small">Safe moves</span><b>{today.fallbacks}</b></div>
+        <div><span className="muted small">Claude failed</span><b>{today.fallbacks}</b></div>
         <div><span className="muted small">Seats playing now</span><b>{status.seats}</b></div>
       </div>
       <p className="muted small">
         To play with the bot, sit at a cash table or register for a Sit &amp; Go and choose <b>🤖 Join as Bot</b>. It plays your
-        seat with your chips, shows a 🤖 on the seat, and you can take over from the table at any time. If Claude is slow, the
-        daily budget is used up, or anything goes wrong, it plays the safe move (check, otherwise fold).
+        seat with your chips, and you can take over from the table at any time; other players are not told it is a bot. The free
+        engine decides on the server at no cost. With Claude, if it is slow, fails or the daily budget is used up, the engine plays that turn.
       </p>
 
       <div className="bot-settings">
+        <div className="bot-choice">
+          <span><b>Brain</b> <small className="muted">Who decides the bot's moves.</small></span>
+          <div className="seg">
+            {[
+              ['engine', '⚙️ Free engine', 'Rules on the server: hand strength, draws, equity, pot odds, position and how each opponent plays. Costs nothing.'],
+              ['hybrid', '⚙️+🧠 Hybrid', 'The engine plays everyday spots; Claude decides big pots and big calls. Small cost.'],
+              ['claude', '🧠 Claude every turn', 'Claude Opus decides every move. Best reads, about $0.01 a move.'],
+            ].map(([k, label, hint]) => (
+              <button key={k} type="button" className={`seg-opt ${mode === k ? 'on' : ''}`} onClick={() => setMode(k)} title={hint}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <small className="muted">{{ engine: 'Rules on the server: hand strength, draws, equity, pot odds, position and how each opponent plays. Costs nothing.', hybrid: 'The engine plays everyday spots; Claude decides big pots and big calls. Small cost.', claude: 'Claude Opus decides every move. Best reads, about $0.01 a move.' }[mode]}{mode !== 'engine' && !status.claudeReady ? ' Needs an API key on the server.' : ''}</small>
+        </div>
+        <div className="bot-choice">
+          <span><b>Engine style</b> <small className="muted">How boldly the engine plays.</small></span>
+          <div className="seg">
+            {[['tight', 'Tight'], ['balanced', 'Balanced'], ['aggressive', 'Aggressive']].map(([k, label]) => (
+              <button key={k} type="button" className={`seg-opt ${style === k ? 'on' : ''}`} onClick={() => setStyle(k)}>{label}</button>
+            ))}
+          </div>
+        </div>
         <label className="bot-playbook">
-          <span><b>Playbook</b> <small className="muted">Teach the bot how to play. It reads this before every decision.</small></span>
+          <span><b>Playbook</b> <small className="muted">For Claude: teach it how to play. It reads this before every decision it makes.</small></span>
           <textarea value={playbook} onChange={(e) => setPlaybook(e.target.value)} rows={9} maxLength={6000} />
         </label>
         <label className="bot-budget">
-          <span><b>Daily budget</b> <small className="muted">US dollars. Above it the bot only plays safe moves.</small></span>
+          <span><b>Daily budget</b> <small className="muted">US dollars for Claude. Above it the free engine plays every turn.</small></span>
           <input type="number" min="0" max="100" step="0.5" value={budget} onChange={(e) => setBudget(e.target.value)} />
         </label>
         <div className="row">
@@ -255,7 +282,7 @@ function BotPanel({ token }) {
               </span>
               <span className="bot-log-move">
                 <b className={`bot-move ${d.action}`}>{d.action === 'raise' ? `raise ${d.amount}` : d.action}</b>
-                <small>{d.fallback ? `safe move: ${d.fallback}` : d.reason}</small>
+                <small>{d.model === 'engine' ? '⚙️ ' : '🧠 '}{d.reason}{d.fallback ? ` (Claude: ${d.fallback})` : ''}</small>
               </span>
               <span className="bot-log-cost">
                 <b>{d.ms ? `${(d.ms / 1000).toFixed(1)} s` : '—'}</b>

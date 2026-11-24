@@ -2,6 +2,10 @@ import { BotSettings, BotDecision } from '../models.js';
 import crypto from 'crypto';
 import { systemPrompt } from './botBrain.js';
 import { readHand } from './botRead.js';
+import { decide as decideLocally, STYLES } from './botEngine.js';
+
+// engine: free rule-based play on the server · hybrid: engine, with Claude for big pots · claude: Claude every turn
+const MODES = ['engine', 'hybrid', 'claude'];
 
 // Seats played by the AI bot. When an admin sits down or registers "as Bot", their seat is marked
 // here and the bot plays it: whenever it is that seat's turn, the bot describes the table to Claude
@@ -90,14 +94,21 @@ export function createBots({ brain, notify }) {
   const seats = new Set(); // tableId|uid of every seat the bot plays
   const busy = new Map(); // tableId -> the turn being decided, so each turn is decided once
   const sessions = new Map(); // tableId|uid -> what the bot remembers of this session
-  let settings = { playbook: DEFAULT_PLAYBOOK, dailyBudgetUsd: 3 };
+  let settings = { playbook: DEFAULT_PLAYBOOK, dailyBudgetUsd: 3, mode: 'engine', style: 'aggressive' };
   const spend = { day: today(), usd: 0, decisions: 0, ms: 0, fallbacks: 0 };
 
   // Load the saved playbook and today's spend so far.
   (async () => {
     try {
       const saved = await BotSettings.findOne({ key: 'main' }).lean();
-      if (saved) settings = { playbook: !saved.playbook || saved.playbook.trim() === FIRST_PLAYBOOK ? DEFAULT_PLAYBOOK : saved.playbook, dailyBudgetUsd: saved.dailyBudgetUsd ?? 3 };
+      if (saved) {
+        settings = {
+          playbook: !saved.playbook || saved.playbook.trim() === FIRST_PLAYBOOK ? DEFAULT_PLAYBOOK : saved.playbook,
+          dailyBudgetUsd: saved.dailyBudgetUsd ?? 3,
+          mode: MODES.includes(saved.mode) ? saved.mode : 'engine',
+          style: STYLES[saved.style] ? saved.style : 'aggressive',
+        };
+      }
       const start = new Date(`${today()}T00:00:00Z`);
       const [row] = await BotDecision.aggregate([
         { $match: { at: { $gte: start } } },
@@ -271,6 +282,61 @@ export function createBots({ brain, notify }) {
     return lines.join('\n');
   }
 
+  // The situation for the free engine: the same facts Claude reads, as numbers and flags.
+  function situation(table, p, view) {
+    const order = table.players;
+    const names = POSITION_NAMES[order.length] || [];
+    const s = sessions.get(keyOf(table.id, p.uid));
+    const statsOf = (seat) => s?.opp.get(table.seats[seat]?.uid);
+    const acts = table.actions;
+    const aggressive = (a) => a.t === 'raise' || a.t === 'bet';
+    const pre = acts.filter((a) => a.st === 'preflop');
+    const preRaises = pre.filter(aggressive);
+    const firstRaise = pre.findIndex(aggressive);
+    const limpers = pre.filter((a, i) => a.t === 'call' && a.seat !== p.seat && (firstRaise < 0 || i < firstRaise)).length;
+    const onStreet = acts.filter((a) => a.st === table.street);
+    const streetBets = onStreet.filter(aggressive);
+    const lastBet = streetBets[streetBets.length - 1];
+    // Who led the previous street: the initiative carries over to this one.
+    const prevStreet = { flop: 'preflop', turn: 'flop', river: 'turn' }[table.street];
+    const prevBets = prevStreet ? acts.filter((a) => a.st === prevStreet && aggressive(a)) : [];
+    const live = order.filter((q) => !q.folded);
+    const others = live.filter((q) => q.uid !== p.uid);
+    const pos = names[order.findIndex((q) => q.seat === p.seat)] || '';
+    // How loose the table plays: the average share of hands the others put money in (once known).
+    const known = table.seated.map((q) => q.uid !== p.uid && s?.opp.get(q.uid)).filter((o) => o && o.hands >= 5);
+    const tableVpip = known.length ? known.reduce((sum, o) => sum + o.vpip / o.hands, 0) / known.length : null;
+    return {
+      tableVpip,
+      style: settings.style,
+      hole: p.cards,
+      board: [...table.board],
+      street: table.street,
+      bb: table.bb,
+      pot: view.pot,
+      toCall: view.toCall || 0,
+      stack: p.stack,
+      myBet: p.bet || 0,
+      canRaise: !!view.canRaise,
+      minRaiseTo: view.minRaiseTo,
+      maxRaiseTo: view.maxRaiseTo,
+      pos,
+      players: order.length,
+      preRaises: preRaises.length,
+      lastRaiser: preRaises.length ? statsOf(preRaises[preRaises.length - 1].seat) : null,
+      limpers,
+      iRaised: preRaises.some((a) => a.seat === p.seat),
+      inPosition: table.street === 'preflop' ? ['BTN', 'CO', 'BTN/SB'].includes(pos) : live[live.length - 1]?.uid === p.uid,
+      opponents: others.length,
+      streetRaises: streetBets.length,
+      aggressor: lastBet && lastBet.seat !== p.seat ? statsOf(lastBet.seat) : null,
+      mainOpponent: others.length ? statsOf(others[0].seat) : null,
+      hadInitiative: prevBets.length > 0 && prevBets[prevBets.length - 1].seat === p.seat,
+      checkedToMe: streetBets.length === 0,
+      roll: crypto.randomInt(1, 101),
+    };
+  }
+
   // Turn Claude's answer into a move the table accepts; anything odd becomes the safe move.
   function legalize(d, view) {
     const safe = view.toCall > 0 ? { type: 'fold' } : { type: 'check' };
@@ -304,15 +370,30 @@ export function createBots({ brain, notify }) {
     rollDay();
     let decision = null;
     let fallback = '';
-    if (!brain.ready()) fallback = 'no API key on the server';
-    else if (spend.usd >= settings.dailyBudgetUsd) fallback = `daily budget of $${settings.dailyBudgetUsd} reached`;
-    else {
-      try {
-        const effort = effortFor(view, p, table.bb, table.street);
-        decision = await brain.decide({ system: systemPrompt(settings.playbook), prompt: describe(table, p, view), effort, timeoutMs: effort === 'low' ? DECIDE_TIMEOUT_MS : BIG_DECIDE_TIMEOUT_MS });
-      } catch (err) {
-        fallback = err.message?.slice(0, 120) || 'Claude did not answer';
+    // Which brain plays this turn: the free engine, or Claude (always, or only for big pots).
+    const effort = effortFor(view, p, table.bb, table.street);
+    const wantClaude = settings.mode === 'claude' || (settings.mode === 'hybrid' && effort === 'medium');
+    if (wantClaude) {
+      if (!brain.ready()) fallback = 'no API key on the server';
+      else if (spend.usd >= settings.dailyBudgetUsd) fallback = `daily budget of $${settings.dailyBudgetUsd} reached`;
+      else {
+        try {
+          decision = await brain.decide({ system: systemPrompt(settings.playbook), prompt: describe(table, p, view), effort, timeoutMs: effort === 'low' ? DECIDE_TIMEOUT_MS : BIG_DECIDE_TIMEOUT_MS });
+        } catch (err) {
+          fallback = err.message?.slice(0, 120) || 'Claude did not answer';
+        }
       }
+    }
+    // The engine plays every turn Claude doesn't: by choice, or when Claude can't answer.
+    if (!decision) {
+      const t0 = Date.now();
+      try {
+        decision = { ...decideLocally(situation(table, p, view)), model: 'engine', costUsd: 0 };
+      } catch (err) {
+        console.error('bot engine failed', err);
+        fallback = fallback || 'engine error';
+      }
+      if (decision) decision.ms = Date.now() - t0;
     }
     const move = legalize(decision, view);
     // Answer at a human pace for this spot: never instantly, and never at the same steady rhythm.
@@ -328,7 +409,7 @@ export function createBots({ brain, notify }) {
     spend.decisions += 1;
     spend.ms += decision?.ms || 0;
     if (fallback) spend.fallbacks += 1;
-    const said = `${move.type === 'raise' ? `raise to ${fmt(move.amount)}` : move.type}${decision?.reason ? ` · ${decision.reason}` : ''}${fallback ? ` · safe move (${fallback})` : ''}`;
+    const said = `${move.type === 'raise' ? `raise to ${fmt(move.amount)}` : move.type}${decision?.reason ? ` · ${decision.reason}` : ''}${fallback ? ` · ${decision ? 'engine played' : 'safe move'} (${fallback})` : ''}`;
     notify(p.uid, { tableId: table.id, text: said });
     BotDecision.create({
       uid: p.uid,
@@ -358,8 +439,12 @@ export function createBots({ brain, notify }) {
   function status() {
     rollDay();
     return {
-      ready: brain.ready(),
-      model: brain.model,
+      // The engine needs nothing, so the bot is ready unless it must use Claude and has no key.
+      ready: settings.mode !== 'claude' || brain.ready(),
+      claudeReady: brain.ready(),
+      model: settings.mode === 'engine' ? 'Free engine' : settings.mode === 'hybrid' ? `Engine + ${brain.model}` : brain.model,
+      mode: settings.mode,
+      style: settings.style,
       playbook: settings.playbook,
       dailyBudgetUsd: settings.dailyBudgetUsd,
       today: { spentUsd: Math.round(spend.usd * 10000) / 10000, decisions: spend.decisions, avgMs: spend.decisions ? Math.round(spend.ms / Math.max(1, spend.decisions - spend.fallbacks)) : 0, fallbacks: spend.fallbacks },
@@ -367,8 +452,10 @@ export function createBots({ brain, notify }) {
     };
   }
 
-  async function saveSettings({ playbook, dailyBudgetUsd }) {
+  async function saveSettings({ playbook, dailyBudgetUsd, mode, style }) {
     if (typeof playbook === 'string') settings.playbook = playbook.slice(0, 6000);
+    if (MODES.includes(mode)) settings.mode = mode;
+    if (STYLES[style]) settings.style = style;
     if (dailyBudgetUsd != null) {
       const v = Number(dailyBudgetUsd);
       if (Number.isFinite(v) && v >= 0 && v <= 100) settings.dailyBudgetUsd = Math.round(v * 100) / 100;
@@ -377,5 +464,5 @@ export function createBots({ brain, notify }) {
     return status();
   }
 
-  return { setBot, forget, rememberHand, onTableChange, status, saveSettings, isBot: (tableId, uid) => seats.has(keyOf(tableId, uid)), describe, legalize };
+  return { setBot, forget, rememberHand, onTableChange, status, saveSettings, isBot: (tableId, uid) => seats.has(keyOf(tableId, uid)), describe, legalize, situation };
 }

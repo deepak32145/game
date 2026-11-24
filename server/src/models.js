@@ -95,6 +95,8 @@ const botSettingsSchema = new mongoose.Schema({
   key: { type: String, unique: true, default: 'main' },
   playbook: { type: String, default: '' },
   dailyBudgetUsd: { type: Number, default: 3 },
+  mode: { type: String, default: 'engine' }, // engine | hybrid | claude
+  style: { type: String, default: 'aggressive' }, // tight | balanced | aggressive
 });
 
 // One decision the bot made, for the admin to review. Deleted by itself after two weeks.

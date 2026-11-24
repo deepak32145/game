@@ -680,7 +680,7 @@ export default function Table({ table: view, me, token, socket, canJoin, maxTabl
                 <span className={`pk-botbar-face ${myTurn ? 'thinking' : ''}`}>🤖</span>
                 <div>
                   <b>{myTurn ? 'The bot is thinking…' : 'The bot is playing your seat'}</b>
-                  <small>{botSaid || 'Claude decides each move. You can take over at any time.'}</small>
+                  <small>{botSaid || 'The bot decides each move. You can take over at any time.'}</small>
                 </div>
               </div>
               <button className="btn" onClick={() => setBot(false)}>Take over</button>

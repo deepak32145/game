@@ -141,6 +141,74 @@ export function equityVsRandom(hole, board, opponents, samples = opponents >= 3 
   return Math.round((won / samples) * 100);
 }
 
+// Would a player bet with these two cards on this board? A real pair or better (not just the
+// board's), or a flush draw; anything else only as a bluff, at the given rate.
+function wouldBet(cards, board, bluffRate, minCat) {
+  const cat = bestHand([...cards, ...board]).score[0];
+  const boardCat = board.length >= 5 ? bestHand(board).score[0] : board.length >= 2 && new Set(board.map((c) => c[0])).size < board.length ? 1 : 0;
+  if (cat >= minCat && cat > boardCat) return true;
+  if (minCat <= 1 && board.length < 5) {
+    for (const s of 'shdc') {
+      const onBoard = board.filter((c) => c[1] === s).length;
+      if (onBoard < 4 && onBoard + cards.filter((c) => c[1] === s).length >= 4) return true;
+    }
+  }
+  return Math.random() < bluffRate;
+}
+
+// Chance of winning when one opponent has bet: their cards are drawn only from hands they would
+// plausibly bet (see wouldBet); the other opponents still in hold random cards. 0 to 100.
+export function equityVsBettor(hole, board, opponents, { bluffRate = 0.3, minCat = 1 } = {}, samples = opponents >= 3 ? 200 : 300) {
+  const dead = new Set([...hole, ...board]);
+  const rest = FULL_DECK.filter((c) => !dead.has(c));
+  const need = 5 - board.length;
+  let won = 0;
+  let n = 0;
+  for (let tries = 0; n < samples && tries < samples * 12; tries++) {
+    const deal = need + opponents * 2;
+    const pool = rest.slice();
+    for (let k = 0; k < deal; k++) {
+      const j = k + Math.floor(Math.random() * (pool.length - k));
+      [pool[k], pool[j]] = [pool[j], pool[k]];
+    }
+    const bettor = [pool[need], pool[need + 1]];
+    if (!wouldBet(bettor, board, bluffRate, minCat)) continue;
+    n++;
+    const full = [...board, ...pool.slice(0, need)];
+    const mine = bestHand([...hole, ...full]).score;
+    let share = 1;
+    let ties = 1;
+    for (let o = 0; o < opponents; o++) {
+      const theirs = bestHand([pool[need + o * 2], pool[need + o * 2 + 1], ...full]).score;
+      const cmp = compareScores(mine, theirs);
+      if (cmp < 0) { share = 0; break; }
+      if (cmp === 0) ties++;
+    }
+    won += share / ties;
+  }
+  return n ? Math.round((won / n) * 100) : equityVsRandom(hole, board, opponents);
+}
+
+// The same reads as flags, for the free decision engine.
+export function features(hole, board) {
+  const d = draws(hole, board);
+  const suits = board.length ? Math.max(...'shdc'.split('').map((s) => board.filter((c) => c[1] === s).length)) : 0;
+  const tex = board.length >= 3 ? texture(board) : '';
+  return {
+    made: board.length >= 3 ? madeHand(hole, board) : '',
+    draws: d,
+    flushDraw: d.some((x) => x.includes('flush draw (9')),
+    nutFlushDraw: d.some((x) => x.startsWith('nut flush draw')),
+    oesd: d.some((x) => x.startsWith('open-ended')),
+    gutshot: d.some((x) => x.startsWith('gutshot')),
+    overcards: d.some((x) => x.startsWith('two overcards')),
+    backdoor: d.some((x) => x.startsWith('backdoor')),
+    // Wet: flush or straight draws are likely on this board.
+    wet: (suits >= 2 && board.length < 5) || suits >= 3 || tex.includes('connected:'),
+    paired: tex.includes('paired'),
+  };
+}
+
 // The lines the bot reads about its own hand.
 export function readHand(hole, board, opponents) {
   const lines = [];
