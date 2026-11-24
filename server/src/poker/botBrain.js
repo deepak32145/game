@@ -10,6 +10,7 @@ import Anthropic from '@anthropic-ai/sdk';
 export const BOT_MODEL = 'claude-opus-5-5';
 const EFFORT = 'low';
 const MAX_TOKENS = 1500; // thinking counts towards this; low effort stays well under it
+const MAX_TOKENS_BIG = 4000; // medium effort, for big pots, thinks a little longer
 
 // Claude Opus 5.5 prices in US dollars per million tokens (cache writes cost 1.25x input).
 const PRICE = { input: 4, cacheWrite: 5, cacheRead: 0.2, output: 20 };
@@ -36,9 +37,32 @@ How to answer:
 - Otherwise amount is 0.
 - reason is at most 12 words, for the admin's log.
 
-Play well and like a thoughtful human: think about position, stack sizes in big blinds, pot odds, ranges,
-board texture, and what each opponent has shown this session. Mix up your play so you are hard to read.
-In tournaments, think about survival and the blind level. Decide quickly; do not over-think simple spots.`;
+The message also gives YOUR HAND (how your hand ranks on this board, and your draws with outs), BOARD TEXTURE,
+EQUITY against random cards, INITIATIVE (who raised last before the flop), SIZES (ready-made bet sizes) and a ROLL.
+
+Play like a strong, tricky regular, not an ABC player. Predictable players get exploited by friends who know them.
+- Pre-flop: never limp; open-raise or fold (completing the small blind is fine). Open wider in late position and steal
+  the blinds of tight players. 3-bet your strong hands, and also 3-bet as a bluff with suited aces, suited broadways and
+  suited connectors, more in position and against late-position opens. Call a 3-bet with hands that play well
+  after the flop; 4-bet your best hands and sometimes a suited ace as a bluff.
+- With the initiative, bet the flop often: small (1/3 pot) on dry boards, bigger (2/3 to 3/4) on wet boards when you
+  have value or a good draw. Give up some air on boards that hit the callers.
+- Semi-bluff your draws: bet or raise flush draws and open-enders, especially with overcards. Call with draws when
+  the price is right. Float in position with backdoor draws and overcards, then take the pot away when they check.
+- Check-raise good hands and strong draws out of position. Slow-play monsters some of the time on dry boards.
+- Turn and river: barrel when the turn card helps your range or adds equity; give up hopeless bluffs. On the river
+  be polarised: bet big with the nuts and with your best bluffs (missed draws, hands that block their calls), check
+  medium-strength hands and catch bluffs with them.
+- Size with a purpose and use different SIZES; never always the same amount.
+- Read opponents: against calling stations value-bet thinner and bluff rarely; against tight or weak players
+  bluff and steal more; against aggressive players trap and call down lighter; respect big raises from tight passive
+  players. Use what they have shown down this session.
+- Use the ROLL to mix: when a spot has two good lines, take the trickier one (slow-play, check-raise, bluff,
+  unusual size) when the ROLL is 30 or lower, and the standard line otherwise. Do not always play the same hand the same way.
+- Equity against random cards is only a guide; discount it heavily against someone who bet or raised big.
+In tournaments, think about the blind level and your stack in big blinds: with 15bb or less, shove or fold
+pre-flop rather than raising small; near the prizes, avoid marginal all-ins against bigger stacks.
+Decide quickly; do not over-think simple spots.`;
 
 const PLAYBOOK_HEADER = `\n\nThe club's admin has taught you this playbook. Follow it unless a spot clearly calls for something else:\n`;
 
@@ -67,18 +91,18 @@ export function createBrain(apiKey = process.env.ANTHROPIC_API_KEY) {
     model: BOT_MODEL,
 
     // Returns { action, amount, reason, ms, usage, costUsd, model } or throws.
-    async decide({ system, prompt, timeoutMs }) {
+    async decide({ system, prompt, timeoutMs, effort = EFFORT }) {
       if (!client) throw new Error('No ANTHROPIC_API_KEY on the server');
       const started = Date.now();
       const response = await client.beta.messages.create(
         {
           model: BOT_MODEL,
-          max_tokens: MAX_TOKENS,
+          max_tokens: effort === 'low' ? MAX_TOKENS : MAX_TOKENS_BIG,
           // If a safety check declines the request, the API answers with a fallback model instead.
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
           system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-          output_config: { effort: EFFORT, format: { type: 'json_schema', schema: DECISION_SCHEMA } },
+          output_config: { effort, format: { type: 'json_schema', schema: DECISION_SCHEMA } },
           messages: [{ role: 'user', content: prompt }],
         },
         { timeout: timeoutMs },

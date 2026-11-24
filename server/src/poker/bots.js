@@ -1,5 +1,7 @@
 import { BotSettings, BotDecision } from '../models.js';
+import crypto from 'crypto';
 import { systemPrompt } from './botBrain.js';
+import { readHand } from './botRead.js';
 
 // Seats played by the AI bot. When an admin sits down or registers "as Bot", their seat is marked
 // here and the bot plays it: whenever it is that seat's turn, the bot describes the table to Claude
@@ -10,9 +12,16 @@ import { systemPrompt } from './botBrain.js';
 const THINK_MIN_MS = 1200; // never answer faster than a human would
 const THINK_SPREAD_MS = 1800; // ... plus up to this much more, at random
 const DECIDE_TIMEOUT_MS = 11000; // players have 25 seconds; give up on Claude well before that
+const BIG_DECIDE_TIMEOUT_MS = 16000; // a big pot gets a little longer to think, still inside the clock
 const RECENT_HANDS = 8; // how many of this session's hands the bot is reminded of
 
-export const DEFAULT_PLAYBOOK = `- Play tighter from early position and wider on the button.
+export const DEFAULT_PLAYBOOK = `- Loose-aggressive style: play plenty of hands in position and put pressure on with bets and raises.
+- Fire a second barrel on good turn cards when you have equity; give up on bad ones.
+- Mix it up: sometimes check-raise the flop, sometimes overbet the river, sometimes just call with a monster.
+- Against players who call a lot, value bet thinner and bluff less.`;
+
+// The playbook first shipped; a seat still using it gets the newer default above.
+const FIRST_PLAYBOOK = `- Play tighter from early position and wider on the button.
 - Open-raise to about 2.5 big blinds; 3-bet strong hands and some suited aces as bluffs.
 - Bet for value when ahead; don't slow-play wet boards.
 - Against players who call a lot, bluff less and value bet thinner.
@@ -47,6 +56,36 @@ function humanThinkMs(view, move, p) {
 }
 const keyOf = (tableId, uid) => `${tableId}|${uid}`;
 
+// Ready-made bet sizes, so the bot varies them sensibly instead of always picking the same one.
+function sizeMenu(view, p, bb, street) {
+  const facing = (p.bet || 0) + (view.toCall || 0); // the bet to match on this street
+  const clamp = (n) => Math.max(view.minRaiseTo, Math.min(view.maxRaiseTo, Math.round(n)));
+  const items = [];
+  if (street === 'preflop' && facing <= bb) {
+    for (const x of [2.2, 2.5, 3]) items.push([`open ${x}bb`, x * bb]);
+  } else if (facing === 0) {
+    for (const [label, f] of [['1/3 pot', 1 / 3], ['1/2 pot', 0.5], ['3/4 pot', 0.75], ['pot', 1], ['overbet 1.5x pot', 1.5]]) items.push([label, view.pot * f]);
+  } else {
+    items.push(['2.5x', facing * 2.5], ['3x', facing * 3], [street === 'preflop' ? '4x (out of position)' : 'pot-size raise', street === 'preflop' ? facing * 4 : facing + view.pot + view.toCall]);
+  }
+  const seen = new Set();
+  const out = [];
+  for (const [label, n] of items) {
+    const v = clamp(n);
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(`${label} = ${fmt(v)}${v === view.maxRaiseTo ? ' (all-in)' : ''}`);
+  }
+  if (!seen.has(view.maxRaiseTo)) out.push(`all-in = ${fmt(view.maxRaiseTo)}`);
+  return out;
+}
+
+// Bigger decisions get a little more thinking; everyday spots stay cheap and quick.
+function effortFor(view, p, bb, street) {
+  const big = view.pot >= 25 * bb || (view.toCall || 0) >= 12 * bb || (view.toCall > 0 && view.toCall >= p.stack * 0.4) || (street === 'river' && view.toCall > 0);
+  return big ? 'medium' : 'low';
+}
+
 export function createBots({ brain, notify }) {
   const seats = new Set(); // tableId|uid of every seat the bot plays
   const busy = new Map(); // tableId -> the turn being decided, so each turn is decided once
@@ -58,7 +97,7 @@ export function createBots({ brain, notify }) {
   (async () => {
     try {
       const saved = await BotSettings.findOne({ key: 'main' }).lean();
-      if (saved) settings = { playbook: saved.playbook || DEFAULT_PLAYBOOK, dailyBudgetUsd: saved.dailyBudgetUsd ?? 3 };
+      if (saved) settings = { playbook: !saved.playbook || saved.playbook.trim() === FIRST_PLAYBOOK ? DEFAULT_PLAYBOOK : saved.playbook, dailyBudgetUsd: saved.dailyBudgetUsd ?? 3 };
       const start = new Date(`${today()}T00:00:00Z`);
       const [row] = await BotDecision.aggregate([
         { $match: { at: { $gte: start } } },
@@ -178,8 +217,13 @@ export function createBots({ brain, notify }) {
     } else {
       lines.push(`GAME: Cash game "${table.name}", blinds ${table.sb}/${bb}.`);
     }
-    lines.push(`YOU: ${p.name}, ${posOf(p.seat)}, stack ${fmt(p.stack)} (${bbs(p.stack)}). Your cards: ${p.cards.join(' ')}.${view.myHand ? ` You have ${view.myHand}.` : ''}`);
+    lines.push(`YOU: ${p.name}, ${posOf(p.seat)}, stack ${fmt(p.stack)} (${bbs(p.stack)}). Your cards: ${p.cards.join(' ')}.`);
     lines.push(`STREET: ${table.street}. BOARD: ${table.board.length ? table.board.join(' ') : '(none yet)'}. POT: ${fmt(view.pot)} (${bbs(view.pot)}).`);
+    const who0 = (seat) => (seat === p.seat ? 'You' : table.seats[seat]?.name || `Seat ${seat + 1}`);
+    lines.push(...readHand(p.cards, table.board, order.filter((q) => q.uid !== p.uid && !q.folded).length));
+    // Who took the betting lead before the flop: the last pre-flop raiser has the initiative.
+    const lastRaise = [...table.actions].reverse().find((a) => a.st === 'preflop' && a.t === 'raise');
+    if (table.street !== 'preflop') lines.push(`INITIATIVE: ${lastRaise ? `${who0(lastRaise.seat)} raised last before the flop` : 'nobody raised before the flop (limped pot)'}.`);
 
     lines.push('PLAYERS (order of action after the flop):');
     for (const q of order) {
@@ -216,6 +260,9 @@ export function createBots({ brain, notify }) {
     } else opts.push('check');
     if (view.canRaise) opts.push(`raise to between ${fmt(view.minRaiseTo)} and ${fmt(view.maxRaiseTo)} (all-in = ${fmt(view.maxRaiseTo)})`);
     lines.push(`YOUR OPTIONS: ${opts.join(' | ')}`);
+    if (view.canRaise) lines.push(`SIZES (raise-to amounts): ${sizeMenu(view, p, bb, table.street).join(', ')}`);
+    // A fresh random number each turn, so the bot can play mixed strategies instead of always the same line.
+    lines.push(`ROLL: ${crypto.randomInt(1, 101)} (random 1-100, use it to mix your lines)`);
 
     if (s && s.hands > 0) {
       lines.push(`YOUR SESSION: ${s.hands} hands played here, net ${s.net >= 0 ? '+' : ''}${fmt(s.net)}. Recent hands:`);
@@ -261,7 +308,8 @@ export function createBots({ brain, notify }) {
     else if (spend.usd >= settings.dailyBudgetUsd) fallback = `daily budget of $${settings.dailyBudgetUsd} reached`;
     else {
       try {
-        decision = await brain.decide({ system: systemPrompt(settings.playbook), prompt: describe(table, p, view), timeoutMs: DECIDE_TIMEOUT_MS });
+        const effort = effortFor(view, p, table.bb, table.street);
+        decision = await brain.decide({ system: systemPrompt(settings.playbook), prompt: describe(table, p, view), effort, timeoutMs: effort === 'low' ? DECIDE_TIMEOUT_MS : BIG_DECIDE_TIMEOUT_MS });
       } catch (err) {
         fallback = err.message?.slice(0, 120) || 'Claude did not answer';
       }
