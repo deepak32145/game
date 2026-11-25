@@ -1,4 +1,5 @@
 import { equityVsRandom, equityVsBettor, features } from './botRead.js';
+import { bestHand, compareScores } from './handEval.js';
 
 // The bot's free brain: a rule-based poker player that runs on the server, with no API calls.
 // It reads the same things Claude is given (its cards and the board, draws, equity, position,
@@ -62,6 +63,86 @@ function sized(sit, to) {
   const total = Math.round(to);
   if (total >= sit.maxRaiseTo * 0.45) return sit.maxRaiseTo;
   return clamp(total, sit.minRaiseTo, sit.maxRaiseTo);
+}
+
+// ---------------- ranges and prices before the flop ----------------
+
+// Share of all starting hands at or above each Chen score (score -> fraction), to turn a range
+// width like "top 25%" into the weakest score in that range.
+const SCORE_SHARE = [[16, 0.01], [14, 0.02], [12, 0.04], [11, 0.05], [10, 0.07], [9, 0.11], [8, 0.15], [7, 0.27], [6, 0.35], [5, 0.44], [4, 0.58], [3, 0.67], [2, 0.79], [1, 0.88], [0, 0.96], [-1, 1]];
+export function scoreForWidth(width) {
+  for (const [score, share] of SCORE_SHARE) if (share >= width) return score;
+  return -1;
+}
+
+// How wide the last raiser's range is: what share of hands they would raise like this.
+// Uses how often they have actually raised this session when known; else typical widths.
+export function raiserWidth(sit) {
+  const hu = sit.players === 2;
+  const o = sit.lastRaiser;
+  const pfr = o && o.hands >= 6 ? o.pfr / o.hands : null;
+  const raises = sit.preRaises;
+  let width;
+  if (raises === 1) width = pfr != null ? clamp(pfr * (hu ? 1 : 1.3), 0.05, 0.95) : hu ? 0.8 : 0.25;
+  else if (raises === 2) width = pfr != null ? clamp(pfr * 0.35, 0.04, 0.45) : hu ? 0.25 : 0.1;
+  else width = hu ? 0.08 : 0.04;
+  // The size says something too: a small re-raise is wide, a big one is narrow.
+  const last = sit.myBet + sit.toCall; // their raise-to
+  const before = sit.raiseBefore || sit.bb; // the bet they raised over
+  const ratio = last / Math.max(1, before);
+  if (ratio <= 2.2) width *= 1.3;
+  else if (ratio >= 4) width *= 0.75;
+  const p = profile(o);
+  if (p === 'maniac') width *= 1.4;
+  else if (p === 'nit') width *= 0.6;
+  return clamp(width, 0.02, 1);
+}
+
+// Chance my two cards beat a range of hands whose Chen score is at least minScore, before the flop.
+export function equityVsRange(hole, minScore, opponents = 1, samples = 600) {
+  const deck = [];
+  for (const r of '23456789TJQKA') for (const s of 'shdc') if (!hole.includes(r + s)) deck.push(r + s);
+  let won = 0;
+  let n = 0;
+  for (let tries = 0; n < samples && tries < samples * 40; tries++) {
+    const pool = deck.slice();
+    const deal = 5 + opponents * 2;
+    for (let k = 0; k < deal; k++) {
+      const j = k + Math.floor(Math.random() * (pool.length - k));
+      [pool[k], pool[j]] = [pool[j], pool[k]];
+    }
+    const villain = [pool[5], pool[6]];
+    if (chen(villain) < minScore) continue; // not a hand they would raise like this
+    n++;
+    const board = pool.slice(0, 5);
+    const mine = bestHand([...hole, ...board]).score;
+    let share = 1;
+    let ties = 1;
+    for (let o = 0; o < opponents; o++) {
+      const cmp = compareScores(mine, bestHand([pool[5 + o * 2], pool[6 + o * 2], ...board]).score);
+      if (cmp < 0) { share = 0; break; }
+      if (cmp === 0) ties++;
+    }
+    won += share / ties;
+  }
+  return n ? won / n : 0;
+}
+
+// Is calling this raise profitable? Equity against their range, discounted for playing out of
+// position, against the pot odds, helped by implied odds when the stacks behind are deep.
+function priceToCall(sit, hole) {
+  const width = raiserWidth(sit);
+  const eq = equityVsRange(hole, scoreForWidth(width), 1);
+  // Playable hands (suited, connected, or with a high card) realise their equity and get paid when
+  // they hit; junk offsuit hands realise less, especially out of position, and get no implied odds.
+  const [hi, lo] = hole.map((c) => '23456789TJQKA'.indexOf(c[0])).sort((a, b) => b - a);
+  const playable = hole[0][1] === hole[1][1] || hi - lo <= 2 || hi >= 10;
+  const realise = sit.inPosition ? (playable ? 0.95 : 0.82) : playable ? 0.8 : 0.62;
+  const need = sit.toCall / (sit.pot + sit.toCall);
+  const behind = sit.stack - sit.toCall; // what is left to win later
+  const potAfter = sit.pot + sit.toCall;
+  const implied = !playable ? 0 : behind >= potAfter * 10 ? 0.06 : behind >= potAfter * 5 ? 0.03 : 0;
+  return { eq, real: eq * realise, need: need - implied, width };
 }
 
 // ---------------- before the flop ----------------
@@ -130,15 +211,19 @@ function preflop(sit, style) {
     if (score >= valueAt && sit.canRaise) return bet(threeBet, `3-bet for value with ${name}`);
     if (bluffCandidate && sit.canRaise && raiser !== 'station' && roll <= (hu ? 30 : 20) * style.bluff) return bet(threeBet, `3-bet bluff with ${name}`);
     if (score >= callAt || (pair && share <= 0.08)) return call(pair && score < callAt ? `set-mine with ${name}` : `defend with ${name}`);
-    return fold(`${name} too weak against a raise`);
+    const pr = priceToCall(sit, hole);
+    if (pr.real >= pr.need) return call(`defend ${name}: ${pct(pr.eq)} vs their top ${pct(pr.width)}, ${pct(pr.need)} needed`);
+    return fold(`${name}: ${pct(pr.eq)} vs their top ${pct(pr.width)}, ${pct(pr.need)} needed`);
   }
 
   // Facing a 3-bet or more.
   const fourAt = (hu ? 10 : raiser === 'maniac' ? 12 : 13) + s;
   if (score >= fourAt) return sit.canRaise ? bet(sized(sit, facing * 2.3), `4-bet with ${name}`) : call(`call with ${name}`);
   if (sit.iRaised && bluffCandidate && hi >= 11 && sit.canRaise && roll <= (hu ? 14 : 8) * style.bluff) return bet(sized(sit, facing * 2.3), `4-bet bluff with ${name}`);
-  if (score >= (hu ? 6 : 10) + s && share <= 0.25) return call(`call the re-raise with ${name}`);
-  return fold(`${name} not strong enough against a re-raise`);
+  const pr = priceToCall(sit, hole);
+  if (sit.canRaise && pr.eq >= 0.62 && share < 0.5) return bet(sized(sit, facing * 2.3), `4-bet ${name}: ${pct(pr.eq)} vs their top ${pct(pr.width)}`);
+  if (pr.real >= pr.need) return call(`call the re-raise with ${name}: ${pct(pr.eq)} vs their top ${pct(pr.width)}, ${pct(pr.need)} needed`);
+  return fold(`${name}: ${pct(pr.eq)} vs their top ${pct(pr.width)}, ${pct(pr.need)} needed`);
 }
 
 // ---------------- after the flop ----------------

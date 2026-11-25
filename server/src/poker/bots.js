@@ -326,6 +326,8 @@ export function createBots({ brain, notify }) {
       preRaises: preRaises.length,
       lastRaiser: preRaises.length ? statsOf(preRaises[preRaises.length - 1].seat) : null,
       limpers,
+      // The bet the last raiser raised over (the previous raise, or the big blind), to judge its size.
+      raiseBefore: preRaises.length >= 2 ? preRaises[preRaises.length - 2].a : table.bb,
       iRaised: preRaises.some((a) => a.seat === p.seat),
       inPosition: table.street === 'preflop' ? ['BTN', 'CO', 'BTN/SB'].includes(pos) : live[live.length - 1]?.uid === p.uid,
       opponents: others.length,
