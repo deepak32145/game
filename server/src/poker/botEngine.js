@@ -54,10 +54,22 @@ const call = (reason) => ({ action: 'call', amount: 0, reason });
 const check = (reason) => ({ action: 'check', amount: 0, reason });
 const fold = (reason) => ({ action: 'fold', amount: 0, reason });
 
+// A fish who calls everything: a calling station by style, or a player we have seen fold rarely
+// when bet into (or call most river bets). Against one, bluffs burn money and value bets print.
+export function isFish(sit) {
+  const o = sit.villainStats || sit.mainOpponent;
+  if (profile(o) === 'station') return true;
+  const t = tendencies(o);
+  return (t.foldToBet != null && t.foldToBet < 0.35) || (t.riverCall != null && t.riverCall >= 0.65);
+}
+
 export function decide(sit) {
   const base = STYLES[sit.style] || STYLES.aggressive;
   const m = sit.mood;
-  const style = m ? { ...base, bluff: base.bluff * m.bluffMul, shift: base.shift + m.openShift } : base;
+  // Moods may make it bolder, but never bluffier against a fish: tilt, a heater or a big stack
+  // are no reason to bluff someone who calls everything.
+  const bluffMul = m ? (isFish(sit) ? Math.min(1, m.bluffMul) : m.bluffMul) : 1;
+  const style = m ? { ...base, bluff: base.bluff * bluffMul, shift: base.shift + m.openShift } : base;
   return sit.street === 'preflop' ? preflop(sit, style) : postflop(sit, style);
 }
 
@@ -184,11 +196,23 @@ function preflop(sit, style) {
     return fold(`short stack, ${name} not good enough against a raise`);
   }
 
+  const fish = isFish(sit);
+  // In the big blind after a limp: raise good hands (bigger against a fish), a few bluffs against
+  // players who fold, and check the rest for a free flop. Never build a pot out of position with junk.
+  if (raises === 0 && toCall === 0) {
+    // Against a fish only real value isolates: no loosening from style or mood.
+    const isoAt = fish ? 7 + Math.max(0, s - (sit.mood?.openShift || 0)) : (hu ? 8 : 9) + s;
+    if (sit.canRaise && (score >= isoAt || (!fish && bluffCandidate && roll <= 15 * style.bluff))) {
+      return bet(sized(sit, ((fish ? 4 : 3) + Math.max(0, sit.limpers - 1)) * bb), fish ? `raise the fish's limp for value with ${name}` : `raise the limp with ${name}`);
+    }
+    return check(`${name}: check the big blind, free flop`);
+  }
+
   // Nobody has raised: open, isolate limpers, or check the big blind.
   if (raises === 0) {
     // Heads-up the button opens most hands; six-handed it depends on position.
-    const openAt = (hu ? 2 : { UTG: 8, MP: 7, CO: 6, BTN: 4, SB: 6, BB: 7 }[sit.pos] ?? 7) + s + (sit.limpers ? 1 : 0) + (looseTable ? 2 : 0);
-    if (score >= openAt || (late && !looseTable && bluffCandidate && roll <= 45 * style.bluff)) {
+    const openAt = (hu ? 2 : { UTG: 8, MP: 7, CO: 6, BTN: 4, SB: 6, BB: 7 }[sit.pos] ?? 7) + s + (sit.limpers ? 1 : 0) + (looseTable ? 2 : 0) + (fish ? 1 : 0);
+    if (score >= openAt || (late && !looseTable && !fish && bluffCandidate && roll <= 45 * style.bluff)) {
       const open = looseTable ? 3.5 : hu ? (roll <= 50 ? 2 : 2.5) : roll <= 33 ? 2.2 : roll <= 80 ? 2.5 : 3;
       return bet(sized(sit, (open + sit.limpers) * bb), sit.limpers ? `isolation raise with ${name}` : `open-raise from ${sit.pos} with ${name}`);
     }
@@ -349,6 +373,8 @@ function rangePlay(sit, style, f) {
   const what = `${f.made}${f.draws.length ? ` + ${f.draws[0]}` : ''}`;
   const river = street === 'river';
   const legal = (to) => clamp(Math.round(to), sit.minRaiseTo, sit.maxRaiseTo);
+  const fish = isFish(sit);
+  const realDraw = !river && (f.flushDraw || f.oesd);
 
   // Expected chips back from putting in `extra` more, given who continues and how we do against them.
   const evOfBet = (extra, villainFacing, potIfCalled) => {
@@ -401,8 +427,15 @@ function rangePlay(sit, style, f) {
         // On the river nothing is left to protect: bet for value only when called by worse more often
         // than not, or as a bluff with a hand that can't win a showdown. Middling hands check and catch.
         if (river && r.winWhenCalled < 0.55 && eq >= 0.42) continue;
+        // A bet that is called most of the time and loses most of those is burning money,
+        // unless it is a real draw before the river (and not against a fish, who calls anyway).
+        if (r.called > 0.55 && r.winWhenCalled < 0.45 && !(realDraw && !fish)) continue;
+        // Against a fish: value only. Bet when well ahead of the hands that call; never bluff.
+        if (fish && r.winWhenCalled < 0.55) continue;
+        // Size by strength against a fish: thin value small (he calls with worse), big hands big.
+        if (fish && r.winWhenCalled < 0.72 && (x == null || x > 0.5)) continue;
         // Mood leans on bluffs: bolder when confident or tilted, straighter after being caught.
-        const lean = r.winWhenCalled < 0.5 ? pot * 0.06 * ((sit.mood?.bluffMul ?? 1) - 1) : 0;
+        const lean = r.winWhenCalled < 0.5 && !fish ? pot * 0.06 * ((sit.mood?.bluffMul ?? 1) - 1) : 0;
         options.push({ kind: 'bet', to, label, ...r, ev: r.ev + lean });
       }
     }
@@ -412,7 +445,7 @@ function rangePlay(sit, style, f) {
     // makes it worth less.
     let trap = false;
     const bestBet = options.filter((o) => o.kind === 'bet').sort((a, b) => b.ev - a.ev)[0];
-    if (!river && eq >= 0.8 && bestBet) {
+    if (!river && eq >= 0.8 && bestBet && !fish) {
       const stab = tend.stab ?? (villain === 'maniac' ? 0.6 : villain === 'nit' ? 0.2 : 0.35);
       const streetsLeft = street === 'flop' ? 2 : 1;
       const bonus = (1 - bestBet.called) * pot * (0.25 + 0.6 * stab) * streetsLeft * (f.wet ? 0.35 : 1) * (villain === 'station' ? 0.4 : 1);
@@ -426,7 +459,7 @@ function rangePlay(sit, style, f) {
     if (options[1] && pick.ev - options[1].ev < pot * 0.05 && roll <= 35) pick = options[1];
     // Never the same line every time: now and then bet a trap hand anyway, or check one we'd bet.
     if (pick.kind === 'check' && pick.trapBonus && roll >= 85) pick = bestBet;
-    else if (pick.kind === 'bet' && !river && eq >= 0.8 && roll <= 12 * style.bluff) { pick = options.find((o) => o.kind === 'check'); trap = true; }
+    else if (pick.kind === 'bet' && !river && eq >= 0.8 && !fish && roll <= 12 * style.bluff) { pick = options.find((o) => o.kind === 'check'); trap = true; }
     if (pick.kind === 'check' && (pick.trapBonus || trap)) {
       const stabNote = tend.stab != null ? `they bet ${pct(tend.stab)} when checked to` : 'let them bet';
       return check(`trap: check ${what} (${pct(eq)} vs their range); a bet would fold out ${pct(1 - bestBet.called)}, so show weakness, ${stabNote}`);
@@ -435,7 +468,7 @@ function rangePlay(sit, style, f) {
       const best = options.find((o) => o.kind === 'bet');
       return check(`check ${what}: ${pct(eq)} vs their range (${theirs})${best ? `; a bet is called ${pct(best.called)} and wins ${pct(best.winWhenCalled)} then` : ''}${checkNote}`);
     }
-    const why = pick.winWhenCalled >= 0.5 ? 'for value' : river || pick.called < 0.45 ? 'as a bluff' : 'for protection';
+    const why = pick.winWhenCalled >= 0.5 ? (fish ? 'for value against a calling station' : 'for value') : !river && eq >= 0.5 ? 'for protection' : 'as a bluff';
     return bet(pick.to, `bet ${pick.label} ${why} with ${what}: called ${pct(pick.called)}, wins ${pct(pick.winWhenCalled)} when called (their range: ${theirs})`);
   }
 

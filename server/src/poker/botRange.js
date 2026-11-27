@@ -143,7 +143,9 @@ function likelihood(cls, action, size, style, tend = {}, street = '') {
     const over = size > 1 ? 1 / (1 + (size - 1) * 0.9) : 1;
     const shrink = (base, per) => clamp(base * loose * (1 - per * Math.min(big, 1)) * over, 0.01, 0.98);
     // Bigger bets fold out more of the middle: medium hands call a small bet often, a big one less.
-    const p = { monster: 0.55, strong: shrink(0.9, 0.1), medium: shrink(0.62, 0.4), draw: shrink(0.75, 0.3), weak: shrink(0.25, 0.6), air: shrink(0.05, 0.6) }[cls];
+    const p = st === 'station'
+      ? { monster: 0.6, strong: shrink(0.66, 0.05), medium: shrink(0.6, 0.2), draw: shrink(0.62, 0.15), weak: shrink(0.4, 0.35), air: shrink(0.14, 0.4) }[cls] // (x1.5 for a station: most calls)
+      : { monster: 0.55, strong: shrink(0.9, 0.1), medium: shrink(0.62, 0.4), draw: shrink(0.75, 0.3), weak: shrink(0.25, 0.6), air: shrink(0.05, 0.6) }[cls];
     if (cls === 'monster') return p;
     // What we have actually seen them do scales how often each kind of hand folds, against a typical
     // 50%: a player who called eleven river bets of twelve folds about a sixth as often, even with air;
@@ -154,7 +156,9 @@ function likelihood(cls, action, size, style, tend = {}, street = '') {
     return clamp(1 - (1 - p) * scale, 0.01, 0.99);
   }
   if (action === 'raise') {
-    const air = st === 'maniac' ? 0.15 : st === 'nit' ? 0.01 : 0.05;
+    const air = st === 'maniac' ? 0.15 : st === 'nit' || st === 'station' ? 0.01 : 0.05;
+    // A station's raise is almost always a monster.
+    if (st === 'station') return { monster: 0.4, strong: 0.06, medium: 0.01, draw: 0.04, weak: 0.005, air }[cls];
     return { monster: 0.45, strong: 0.15, medium: 0.03, draw: 0.2, weak: 0.01, air }[cls];
   }
   return 1;
