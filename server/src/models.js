@@ -2,35 +2,145 @@ import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema(
   {
+    // How the account logs in: "email:<address>", a Google account id, or "dev:<name>" for local guests.
     googleId: { type: String, required: true, unique: true },
     email: String,
     name: { type: String, required: true },
     picture: String,
-    wins: { type: Number, default: 0 },
-    losses: { type: Number, default: 0 },
-    ties: { type: Number, default: 0 },
+
+    // Wallet. Whole numbers only. Chips sitting on a table are moved out of `balance` into `tables`
+    // (table id -> amount), so the two together are always everything the player owns. If the
+    // server stops unexpectedly, whatever is in `tables` is put back into `balance` on restart.
+    balance: { type: Number, default: 0, min: 0 },
+    tables: { type: Map, of: Number, default: {} },
+
+    banned: { type: Boolean, default: false },
+    banReason: String,
   },
   { timestamps: true }
 );
 
-const matchSchema = new mongoose.Schema({
+// Every change to a wallet, so balances can always be explained.
+const txnSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  // admin_credit | admin_debit | cash_buyin | cash_cashout | sng_buyin | sng_refund | sng_prize | recovered
+  type: { type: String, required: true },
+  amount: { type: Number, required: true }, // positive = into the wallet, negative = out of it
+  balanceAfter: Number,
+  ref: String, // table or tournament it relates to
+  by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // the admin, for admin changes
+  note: String,
+  createdAt: { type: Date, default: Date.now, index: true },
+});
+
+// A pending email login code. Only a keyed hash of the code is stored, never the code itself,
+// and MongoDB deletes the record by itself once it has expired.
+const loginCodeSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  hash: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  sentAt: { type: Date, default: Date.now },
+  sendCount: { type: Number, default: 1 },
+  expiresAt: { type: Date, required: true, index: { expires: 0 } },
+});
+
+// One finished hand, kept so players can look back at what happened.
+// `cards` are every player's real hole cards and are only ever sent to that player;
+// `revealed` is what was turned over at the table, which anyone in the hand may see.
+export const HAND_KEEP_DAYS = 30;
+const handSchema = new mongoose.Schema({
+  tableId: String,
+  tableName: String,
+  kind: String, // 'cash' | 'sng'
+  handNo: Number,
+  blinds: [Number],
+  button: Number,
+  maxSeats: Number,
+  sbSeat: Number,
+  bbSeat: Number,
+  board: [String],
+  pot: Number,
+  showdown: Boolean,
   players: [
     {
-      user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      _id: false,
+      uid: String,
       name: String,
-      team: String,
-      runs: Number,
-      wickets: Number,
-      balls: Number,
+      picture: String,
+      seat: Number,
+      cards: [String],
+      revealed: [String],
+      start: Number, // stack at the start of the hand
+      won: Number,
+      net: Number, // won minus what they put in
+      folded: Boolean,
+      hand: String, // e.g. "Pair of Aces", when it went to a showdown
     },
   ],
-  game: { type: String, default: 'cricket' }, // 'cricket' | 'poker'
-  overs: Number,
-  winner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  resultText: String,
-  finishedAt: { type: Date, default: Date.now },
+  uids: [String], // who was dealt in, for looking hands up by player
+  log: [String],
+  // Every step of the hand in order, for the replayer. st: blinds are 'preflop', the payout is 'result';
+  // t: sb, bb, fold, check, call, bet, raise, return (uncalled chips back), win, show;
+  // a: the amount (for bet and raise the total bet); stack, bet, pot: right after this step.
+  actions: [{ _id: false, st: String, seat: Number, t: String, a: Number, stack: Number, bet: Number, pot: Number }],
+  rabbit: [String], // board cards revealed by a rabbit hunt after the hand, if anyone asked
+  rabbitBy: String,
+  // MongoDB deletes each hand by itself once it is this old.
+  at: { type: Date, default: Date.now, index: { expires: HAND_KEEP_DAYS * 86400 } },
 });
-matchSchema.index({ 'players.user': 1, finishedAt: -1 });
+handSchema.index({ uids: 1, at: -1 });
+
+// The AI bot's settings, edited by the admin: the playbook it follows and how much it may spend a day.
+const botSettingsSchema = new mongoose.Schema({
+  key: { type: String, unique: true, default: 'main' },
+  playbook: { type: String, default: '' },
+  dailyBudgetUsd: { type: Number, default: 3 },
+  mode: { type: String, default: 'engine' }, // engine | hybrid | claude
+  style: { type: String, default: 'aggressive' }, // tight | balanced | aggressive
+  model: { type: String, default: 'haiku' },
+  talk: { type: String, default: 'normal' }, // off | low | normal | high: how often the bot chats, reacts and throws // haiku | sonnet | opus: the Claude model, when Claude plays
+});
+
+// One decision the bot made, for the admin to review. Deleted by itself after two weeks.
+export const BOT_DECISION_KEEP_DAYS = 14;
+const botDecisionSchema = new mongoose.Schema({
+  at: { type: Date, default: Date.now, index: { expires: BOT_DECISION_KEEP_DAYS * 86400 } },
+  uid: String,
+  tableId: String,
+  tableName: String,
+  handNo: Number,
+  street: String,
+  cards: [String],
+  board: [String],
+  pot: Number,
+  toCall: Number,
+  action: String, // what was played: fold | check | call | raise
+  amount: Number,
+  reason: String,
+  ms: Number, // how long Claude took
+  fallback: String, // why the bot played a safe default instead of Claude's answer, if it did
+  model: String,
+  inputTokens: Number,
+  outputTokens: Number,
+  cacheReadTokens: Number,
+  costUsd: Number,
+});
 
 export const User = mongoose.model('User', userSchema);
-export const Match = mongoose.model('Match', matchSchema);
+export const BotSettings = mongoose.model('BotSettings', botSettingsSchema);
+export const BotDecision = mongoose.model('BotDecision', botDecisionSchema);
+
+// What the bot has learned about each player it has played against, across all its games.
+// Only what it saw at the table: the actions, and cards that were shown face up.
+export const NOTE_COUNTS = ['hands', 'vpip', 'pfr', 'bets', 'calls', 'folds', 'facedBet', 'foldedToBet', 'checkedTo', 'stabbed', 'riverFaced', 'riverCalls', 'riverBets', 'riverBetShown', 'riverBluffShown', 'showdowns', 'sessions'];
+const playerNoteSchema = new mongoose.Schema({
+  uid: { type: String, required: true, unique: true },
+  name: String,
+  ...Object.fromEntries(NOTE_COUNTS.map((k) => [k, { type: Number, default: 0 }])),
+  shown: { type: [String], default: [] }, // the last few hands they showed down
+  lastSeen: Date,
+});
+export const PlayerNote = mongoose.model('PlayerNote', playerNoteSchema);
+export const Hand = mongoose.model('Hand', handSchema);
+export const Txn = mongoose.model('Txn', txnSchema);
+export const LoginCode = mongoose.model('LoginCode', loginCodeSchema);

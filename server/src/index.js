@@ -9,6 +9,8 @@ import mongoose from 'mongoose';
 import { Server } from 'socket.io';
 import { config } from './config.js';
 import { router } from './auth.js';
+import { adminRouter } from './admin.js';
+import { recoverStrandedChips } from './wallet.js';
 import { setupRealtime } from './realtime.js';
 
 const app = express();
@@ -18,6 +20,7 @@ app.use(express.json({ limit: '10kb' }));
 // Stop one address from mass-creating guest accounts.
 app.use('/api/auth', rateLimit({ windowMs: 10 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }));
 app.get('/api/version', (_req, res) => res.json({ buildId: readBuildId() }));
+app.use('/api/admin', adminRouter);
 app.use('/api', router);
 
 // Serve the built client when it exists, so one process can host everything.
@@ -50,9 +53,11 @@ app.use((err, _req, res, _next) => {
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: true } });
-setupRealtime(io);
 
 await mongoose.connect(config.mongoUri);
+// No table survives a restart, so chips recorded as being on one go back to their owners first.
+await recoverStrandedChips();
+setupRealtime(io);
 server.listen(config.port, () => {
   console.log(`Pitch Duel server on http://localhost:${config.port}`);
   if (!config.googleClientId) console.log('GOOGLE_CLIENT_ID not set: Google login is hidden.');

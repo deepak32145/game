@@ -121,3 +121,47 @@ export function equity(holeA, holeB, board, samples = 2500) {
   const pctA = Math.round((a / n) * 100);
   return [pctA, 100 - pctA];
 }
+
+// The same idea for any number of players: each one's chance of winning, as whole percentages
+// adding up to 100. `holes` is a list of two-card hands.
+export function equityMulti(holes, board, samples = holes.length > 2 ? 700 : 1500) {
+  const dead = new Set([...holes.flat(), ...board]);
+  const rest = FULL_DECK.filter((c) => !dead.has(c));
+  const need = 5 - board.length;
+  const share = holes.map(() => 0);
+  let n = 0;
+  const run = (extra) => {
+    const full = [...board, ...extra];
+    const scores = holes.map((h) => bestHand([...h, ...full]).score);
+    let best = scores[0];
+    for (const s of scores) if (compareScores(s, best) > 0) best = s;
+    const winners = scores.map((s) => compareScores(s, best) === 0);
+    const count = winners.filter(Boolean).length;
+    winners.forEach((w, i) => {
+      if (w) share[i] += 1 / count;
+    });
+    n += 1;
+  };
+  if (need <= 0) run([]);
+  else if (need === 1) for (const c of rest) run([c]);
+  else if (need === 2) {
+    for (let i = 0; i < rest.length; i++) for (let j = i + 1; j < rest.length; j++) run([rest[i], rest[j]]);
+  } else {
+    for (let s = 0; s < samples; s++) {
+      const pool = rest.slice();
+      const extra = [];
+      for (let k = 0; k < need; k++) {
+        const j = k + Math.floor(Math.random() * (pool.length - k));
+        [pool[k], pool[j]] = [pool[j], pool[k]];
+        extra.push(pool[k]);
+      }
+      run(extra);
+    }
+  }
+  // Round so the figures add up to exactly 100.
+  const pct = share.map((v) => Math.floor((v / n) * 100));
+  let left = 100 - pct.reduce((a, b) => a + b, 0);
+  const order = share.map((v, i) => [(v / n) * 100 - pct[i], i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; left > 0; k++, left--) pct[order[k % order.length][1]] += 1;
+  return pct;
+}
