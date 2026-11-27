@@ -69,7 +69,7 @@ export class Table {
   track(p, t, a = 0, st = this.street) {
     if (this.actions.length >= 200) return;
     const pot = this.pot + this.players.reduce((sum, q) => sum + q.bet, 0);
-    this.actions.push({ st, seat: p.seat, t, a, stack: p.stack, bet: p.bet, pot });
+    this.actions.push({ st, seat: p.seat, t, a, stack: p.stack, bet: p.bet, pot, at: Date.now() }); // at: for timing tells
   }
 
   changed() {

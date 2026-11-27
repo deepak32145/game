@@ -1,8 +1,11 @@
-import { BotSettings, BotDecision } from '../models.js';
+import { BotSettings, BotDecision, PlayerNote, NOTE_COUNTS } from '../models.js';
 import crypto from 'crypto';
 import { systemPrompt, MODELS } from './botBrain.js';
 import { readHand } from './botRead.js';
-import { decide as decideLocally, STYLES } from './botEngine.js';
+import { decide as decideLocally, STYLES, profile } from './botEngine.js';
+import { shownClass } from './botRange.js';
+import { createMood, afterHand, tellFor, moodNow } from './botMood.js';
+import { reactTo, chatEvent, TALK_LEVELS } from './botTalk.js';
 
 // engine: free rule-based play on the server · hybrid: engine, with Claude for big pots · claude: Claude every turn
 const MODES = ['engine', 'hybrid', 'claude'];
@@ -90,11 +93,14 @@ function effortFor(view, p, bb, street) {
   return big ? 'medium' : 'low';
 }
 
-export function createBots({ brain, notify }) {
+// express: how the bot shows feelings at the table, as its owner: { chat, react, throwAt }.
+export function createBots({ brain, notify, express = null }) {
   const seats = new Set(); // tableId|uid of every seat the bot plays
+  const bots = { has: (uid) => [...seats].some((k) => k.endsWith('|' + uid)) };
   const busy = new Map(); // tableId -> the turn being decided, so each turn is decided once
   const sessions = new Map(); // tableId|uid -> what the bot remembers of this session
-  let settings = { playbook: DEFAULT_PLAYBOOK, dailyBudgetUsd: 3, mode: 'engine', style: 'aggressive', model: 'haiku' };
+  const notes = new Map(); // player uid -> everything the bot has learned about them, across games (saved)
+  let settings = { playbook: DEFAULT_PLAYBOOK, dailyBudgetUsd: 3, mode: 'engine', style: 'aggressive', model: 'haiku', talk: 'normal' };
   const spend = { day: today(), usd: 0, decisions: 0, ms: 0, fallbacks: 0 };
 
   // Load the saved playbook and today's spend so far.
@@ -108,6 +114,7 @@ export function createBots({ brain, notify }) {
           mode: MODES.includes(saved.mode) ? saved.mode : 'engine',
           style: STYLES[saved.style] ? saved.style : 'aggressive',
           model: MODELS[saved.model] ? saved.model : 'haiku',
+          talk: saved.talk in TALK_LEVELS ? saved.talk : 'normal',
         };
       }
       const start = new Date(`${today()}T00:00:00Z`);
@@ -116,6 +123,7 @@ export function createBots({ brain, notify }) {
         { $group: { _id: null, usd: { $sum: '$costUsd' }, n: { $sum: 1 }, ms: { $sum: '$ms' }, fb: { $sum: { $cond: [{ $ifNull: ['$fallback', false] }, 1, 0] } } } },
       ]);
       if (row) Object.assign(spend, { usd: row.usd || 0, decisions: row.n || 0, ms: row.ms || 0, fallbacks: row.fb || 0 });
+      for (const n of await PlayerNote.find({}).lean()) notes.set(n.uid, n);
     } catch (err) {
       console.error('bot: could not load settings', err.message);
     }
@@ -134,7 +142,7 @@ export function createBots({ brain, notify }) {
     if (on) {
       seats.add(key);
       seat.bot = true;
-      if (!sessions.has(key)) sessions.set(key, { startedAt: Date.now(), hands: 0, net: 0, recent: [], opp: new Map() });
+      if (!sessions.has(key)) sessions.set(key, { startedAt: Date.now(), hands: 0, net: 0, recent: [], opp: new Map(), mood: createMood(), said: { chatHand: -9, chatAt: 0, throwHand: -9, reactHand: -9 } });
     } else {
       seats.delete(key);
       seat.bot = false;
@@ -152,7 +160,99 @@ export function createBots({ brain, notify }) {
 
   // ---- session memory: what happened in each finished hand, kept per bot seat ----
 
+  // What one finished hand tells us about one player: counts to add, and anything they showed.
+  function handNotes(hand, p) {
+    const d = Object.fromEntries(NOTE_COUNTS.map((k) => [k, 0]));
+    d.hands = 1;
+    const mine = hand.actions.filter((a) => a.seat === p.seat);
+    if (mine.some((a) => a.st === 'preflop' && ['call', 'bet', 'raise'].includes(a.t))) d.vpip = 1;
+    if (mine.some((a) => a.st === 'preflop' && ['bet', 'raise'].includes(a.t))) d.pfr = 1;
+    for (const a of mine) {
+      if (a.st === 'preflop' || a.st === 'result') continue;
+      if (a.t === 'bet' || a.t === 'raise') d.bets += 1;
+      else if (a.t === 'call') d.calls += 1;
+      else if (a.t === 'fold') d.folds += 1;
+    }
+    // After the flop: do they fold when bet into, bet when checked to, call on the river?
+    let street = '';
+    let betPending = false;
+    let checkedBefore = false;
+    let riverAggro = false;
+    for (const a of hand.actions) {
+      if (a.st === 'preflop' || a.st === 'result') continue;
+      if (a.st !== street) { street = a.st; betPending = false; checkedBefore = false; }
+      if (a.seat === p.seat) {
+        if (betPending) {
+          d.facedBet += 1;
+          if (a.t === 'fold') d.foldedToBet += 1;
+          if (street === 'river') { d.riverFaced += 1; if (a.t === 'call') d.riverCalls += 1; }
+        } else if (checkedBefore) {
+          d.checkedTo += 1;
+          if (a.t === 'bet' || a.t === 'raise') d.stabbed += 1;
+        }
+        if (street === 'river' && (a.t === 'bet' || a.t === 'raise')) riverAggro = true;
+      }
+      if (a.t === 'bet' || a.t === 'raise') betPending = true;
+      else if (a.t === 'check') checkedBefore = true;
+    }
+    if (riverAggro) d.riverBets = 1;
+    // Cards turned over at the table are public; anything else stays hidden.
+    let shown = null;
+    if (p.revealed?.length === 2 && p.revealed.every(Boolean)) {
+      shown = `${p.revealed.join(' ')}${p.hand ? ` (${p.hand})` : ''}`;
+      d.showdowns = 1;
+      // A river bet or raise we got to see: was it a real hand, or a bluff?
+      if (riverAggro && hand.board.length === 5) {
+        const cls = shownClass(p.revealed, hand.board);
+        d.riverBetShown = 1;
+        if (cls === 'weak' || cls === 'air' || cls === 'draw') d.riverBluffShown = 1;
+      }
+    }
+    return { d, shown };
+  }
+
+  function addNotes(o, d, shown) {
+    for (const k of NOTE_COUNTS) o[k] = (o[k] || 0) + (d[k] || 0);
+    o.shown = o.shown || [];
+    if (shown) {
+      o.shown.push(shown);
+      if (o.shown.length > 5) o.shown.shift();
+    }
+  }
+
+  // The long-term notes on a player, updated and saved after each hand the bot sees them play.
+  function saveNotes(p, d, shown, newSession) {
+    const n = notes.get(p.uid) || { uid: p.uid, shown: [] };
+    n.name = p.name;
+    n.lastSeen = new Date();
+    if (newSession) d = { ...d, sessions: 1 };
+    addNotes(n, d, shown);
+    notes.set(p.uid, n);
+    const inc = Object.fromEntries(NOTE_COUNTS.filter((k) => d[k]).map((k) => [k, d[k]]));
+    const update = { $inc: inc, $set: { name: p.name, lastSeen: n.lastSeen } };
+    if (shown) update.$push = { shown: { $each: [shown], $slice: -5 } };
+    PlayerNote.updateOne({ uid: p.uid }, update, { upsert: true }).catch((err) => console.error('bot: could not save notes', err.message));
+  }
+
+  // What the bot knows about a player right now: this session's notes, plus what it learned in
+  // earlier games. Older games count as a baseline (worth up to 80 hands); today's play weighs more.
+  const PRIOR_HANDS = 80;
+  function notesFor(s, uid) {
+    const now = s?.opp.get(uid);
+    const all = notes.get(uid);
+    if (!all) return now || null;
+    const prior = Object.fromEntries(NOTE_COUNTS.map((k) => [k, Math.max(0, (all[k] || 0) - (now?.[k] || 0))]));
+    const k = prior.hands > 0 ? Math.min(1, PRIOR_HANDS / prior.hands) : 0;
+    const out = { name: all.name };
+    for (const key of NOTE_COUNTS) out[key] = (now?.[key] || 0) + prior[key] * k;
+    out.shown = [...(all.shown || [])].slice(-3);
+    out.sessions = all.sessions || 0;
+    out.lifetimeHands = all.hands || 0;
+    return out;
+  }
+
   function rememberHand(hand) {
+    const savedFor = new Set(); // long-term notes are taken once per hand, however many bot seats saw it
     for (const key of seats) {
       const [tableId, uid] = key.split('|');
       if (tableId !== hand.tableId || !hand.uids.includes(uid)) continue;
@@ -163,28 +263,73 @@ export function createBots({ brain, notify }) {
       s.net += me.net;
       s.recent.push(summarise(hand, uid));
       if (s.recent.length > RECENT_HANDS) s.recent.shift();
-      // How each opponent has played this session.
       for (const p of hand.players) {
-        if (p.uid === uid) continue;
-        const o = s.opp.get(p.uid) || { name: p.name, hands: 0, vpip: 0, pfr: 0, bets: 0, calls: 0, folds: 0, shown: [] };
+        if (p.uid === uid || bots.has(p.uid)) continue;
+        const { d, shown } = handNotes(hand, p);
+        const fresh = !s.opp.has(p.uid);
+        const o = s.opp.get(p.uid) || { name: p.name, shown: [] };
         o.name = p.name;
-        o.hands += 1;
-        const mine = hand.actions.filter((a) => a.seat === p.seat);
-        if (mine.some((a) => a.st === 'preflop' && ['call', 'bet', 'raise'].includes(a.t))) o.vpip += 1;
-        if (mine.some((a) => a.st === 'preflop' && ['bet', 'raise'].includes(a.t))) o.pfr += 1;
-        for (const a of mine) {
-          if (a.st === 'preflop' || a.st === 'result') continue;
-          if (a.t === 'bet' || a.t === 'raise') o.bets += 1;
-          else if (a.t === 'call') o.calls += 1;
-          else if (a.t === 'fold') o.folds += 1;
-        }
-        // Cards turned over at the table are public; anything else stays hidden.
-        if (p.revealed?.length === 2 && p.revealed.every(Boolean)) {
-          o.shown.push(`${p.revealed.join(' ')}${p.hand ? ` (${p.hand})` : ''}`);
-          if (o.shown.length > 3) o.shown.shift();
-        }
+        addNotes(o, d, shown);
         s.opp.set(p.uid, o);
+        if (!savedFor.has(p.uid)) {
+          savedFor.add(p.uid);
+          saveNotes(p, d, shown, fresh);
+        }
       }
+      // How the hand made the bot feel, and whether to show it.
+      const events = afterHand(s.mood, hand, uid, hand.blinds?.[1] || 1);
+      // A big win: the throw goes at whoever lost the most.
+      const loser = [...hand.players].filter((p) => p.uid !== uid).sort((a, b) => a.net - b.net)[0];
+      for (const ev of events) if (ev.kind === 'bigWin' && loser) Object.assign(ev, { seat: loser.seat, name: loser.name });
+      expressFor(tableId, uid, s, events);
+    }
+  }
+
+  // ---- showing feelings at the table: chat, emoji, throwables (never spammy) ----
+
+  const later = (ms, fn) => setTimeout(() => { try { fn(); } catch (err) { console.error('bot: could not express', err.message); } }, ms);
+  // The most telling events first; at most a chat, a reaction and a throw per hand, spaced like a person.
+  const EVENT_ORDER = ['badBeat', 'theyBluffed', 'bigWin', 'bigLoss', 'crushed', 'caughtBluffing', 'win', 'cardDead', 'thrown', 'gg', 'nh', 'hello'];
+  function expressFor(tableId, uid, s, events, { immediate = false } = {}) {
+    if (!express || settings.talk === 'off' || !events.length) return;
+    const sorted = [...events].sort((a, b) => EVENT_ORDER.indexOf(a.kind) - EVENT_ORDER.indexOf(b.kind));
+    let delay = immediate ? 900 + Math.random() * 1500 : 1500 + Math.random() * 2500;
+    const done = new Set();
+    for (const ev of sorted) {
+      for (const act of reactTo(ev, settings.talk)) {
+        if (done.has(act.type)) continue;
+        const now = Date.now();
+        // Keep it human: chat at most every few hands and 20 seconds, a throw every couple of hands.
+        if (act.type === 'chat' && !immediate && (s.hands - s.said.chatHand < 3 || now - s.said.chatAt < 20000)) continue;
+        if (act.type === 'chat' && immediate && now - s.said.chatAt < 8000) continue;
+        if (act.type === 'throw' && s.hands - s.said.throwHand < 2 && !immediate) continue;
+        if (act.type === 'react' && s.said.reactHand === s.hands) continue;
+        done.add(act.type);
+        if (act.type === 'chat') { s.said.chatHand = s.hands; s.said.chatAt = now; later(delay, () => express.chat(uid, tableId, act.text)); }
+        if (act.type === 'react') { s.said.reactHand = s.hands; later(delay, () => express.react(uid, tableId, act.emote)); }
+        if (act.type === 'throw') { s.said.throwHand = s.hands; later(delay, () => express.throwAt(uid, tableId, act.to, act.item)); }
+        delay += 1200 + Math.random() * 1500;
+      }
+    }
+  }
+
+  // Someone threw something at a bot's seat: sometimes it throws back, or says something.
+  function onThrown(tableId, fromUid, fromSeat, toUid, item) {
+    const key = keyOf(tableId, toUid);
+    if (!seats.has(key) || fromUid === toUid) return;
+    const s = sessions.get(key);
+    if (s) expressFor(tableId, toUid, s, [{ kind: 'thrown', seat: fromSeat, item }], { immediate: true });
+  }
+
+  // Someone said something at a table with a bot seat: answer greetings, "gg", "nh" now and then.
+  function onChat(tableId, fromUid, text) {
+    const kind = chatEvent(text);
+    if (!kind) return;
+    for (const key of seats) {
+      const [tid, uid] = key.split('|');
+      if (tid !== tableId || uid === fromUid) continue;
+      const s = sessions.get(key);
+      if (s) expressFor(tableId, uid, s, [{ kind }], { immediate: true });
     }
   }
 
@@ -239,13 +384,15 @@ export function createBots({ brain, notify }) {
 
     lines.push('PLAYERS (order of action after the flop):');
     for (const q of order) {
-      const o = s?.opp.get(q.uid);
+      const o = notesFor(s, q.uid);
       const state = q.folded ? 'folded' : q.allIn ? 'all-in' : 'in hand';
       let line = `- ${q.uid === p.uid ? 'YOU' : q.name} (${posOf(q.seat)}${q.seat === table.button ? ', dealer' : ''}): stack ${fmt(q.stack)} (${bbs(q.stack)}), bet ${fmt(q.bet)} this street, ${state}`;
       if (o && o.hands >= 3) {
         const pct = (n) => `${Math.round((n / o.hands) * 100)}%`;
         const aggr = o.calls ? (o.bets / o.calls).toFixed(1) : o.bets ? 'high' : '0';
         line += ` | this session ${o.hands} hands: plays ${pct(o.vpip)} of hands, raises pre-flop ${pct(o.pfr)}, aggression ${aggr}`;
+        if (o.facedBet >= 4) line += `, folds to a bet ${Math.round((o.foldedToBet / o.facedBet) * 100)}% (${o.facedBet} times)`;
+        if (o.checkedTo >= 4) line += `, bets when checked to ${Math.round((o.stabbed / o.checkedTo) * 100)}% (${o.checkedTo} times)`;
         if (o.shown.length) line += `, showed ${o.shown.join('; ')}`;
       }
       lines.push(line);
@@ -288,7 +435,7 @@ export function createBots({ brain, notify }) {
     const order = table.players;
     const names = POSITION_NAMES[order.length] || [];
     const s = sessions.get(keyOf(table.id, p.uid));
-    const statsOf = (seat) => s?.opp.get(table.seats[seat]?.uid);
+    const statsOf = (seat) => notesFor(s, table.seats[seat]?.uid);
     const acts = table.actions;
     const aggressive = (a) => a.t === 'raise' || a.t === 'bet';
     const pre = acts.filter((a) => a.st === 'preflop');
@@ -304,8 +451,12 @@ export function createBots({ brain, notify }) {
     const live = order.filter((q) => !q.folded);
     const others = live.filter((q) => q.uid !== p.uid);
     const pos = names[order.findIndex((q) => q.seat === p.seat)] || '';
+    // How the bot feels right now, against the main opponent; and any timing tell they just gave.
+    const mainOpp = others.length === 1 ? others[0] : others.find((q) => q.seat === [...acts].reverse().find((a) => a.seat !== p.seat && (a.t === 'bet' || a.t === 'raise'))?.seat) || others[0];
+    const mood = s?.mood ? moodNow(s.mood, mainOpp?.uid, { myStack: p.stack, villainStack: mainOpp?.stack || 0, bb: table.bb }) : null;
+    const tell = s?.mood && others.length === 1 ? tellFor(s.mood, acts, others[0].seat, others[0].uid, table.street) : null;
     // How loose the table plays: the average share of hands the others put money in (once known).
-    const known = table.seated.map((q) => q.uid !== p.uid && s?.opp.get(q.uid)).filter((o) => o && o.hands >= 5);
+    const known = table.seated.map((q) => q.uid !== p.uid && notesFor(s, q.uid)).filter((o) => o && o.hands >= 5);
     const tableVpip = known.length ? known.reduce((sum, o) => sum + o.vpip / o.hands, 0) / known.length : null;
     return {
       tableVpip,
@@ -336,6 +487,10 @@ export function createBots({ brain, notify }) {
       mainOpponent: others.length ? statsOf(others[0].seat) : null,
       hadInitiative: prevBets.length > 0 && prevBets[prevBets.length - 1].seat === p.seat,
       checkedToMe: streetBets.length === 0,
+      // Heads-up: who the villain is, their notes, and every action this hand, so their range can be read.
+      villainSeat: others.length === 1 ? others[0].seat : null,
+      villainStats: others.length === 1 ? statsOf(others[0].seat) || null : null,
+      actions: acts.map((x) => ({ st: x.st, seat: x.seat, t: x.t, a: x.a, bet: x.bet, pot: x.pot })),
       iCheckedThisStreet: onStreet.some((a) => a.seat === p.seat && a.t === 'check'),
       // Last street (after the flop) they bet and I only called: a float, ready to take it away.
       floated: (() => {
@@ -346,6 +501,8 @@ export function createBots({ brain, notify }) {
         return !!lastAgg && lastAgg.seat !== p.seat && mine?.t === 'call';
       })(),
       roll: crypto.randomInt(1, 101),
+      mood,
+      tell,
     };
   }
 
@@ -403,7 +560,9 @@ export function createBots({ brain, notify }) {
     if (!decision) {
       const t0 = Date.now();
       try {
-        decision = { ...decideLocally(situation(table, p, view)), model: 'engine', costUsd: 0 };
+        const sit = situation(table, p, view);
+        decision = { ...decideLocally(sit), model: 'engine', costUsd: 0 };
+        if (sit.mood?.label) decision.reason = `${sit.mood.label} · ${decision.reason}`;
       } catch (err) {
         console.error('bot engine failed', err);
         fallback = fallback || 'engine error';
@@ -460,6 +619,7 @@ export function createBots({ brain, notify }) {
       model: settings.mode === 'engine' ? 'Free engine' : settings.mode === 'hybrid' ? `Engine + ${MODELS[settings.model].label}` : MODELS[settings.model].label,
       mode: settings.mode,
       claudeModel: settings.model,
+      talk: settings.talk,
       style: settings.style,
       playbook: settings.playbook,
       dailyBudgetUsd: settings.dailyBudgetUsd,
@@ -468,7 +628,8 @@ export function createBots({ brain, notify }) {
     };
   }
 
-  async function saveSettings({ playbook, dailyBudgetUsd, mode, style, model }) {
+  async function saveSettings({ playbook, dailyBudgetUsd, mode, style, model, talk }) {
+    if (talk in TALK_LEVELS) settings.talk = talk;
     if (MODELS[model]) settings.model = model;
     if (typeof playbook === 'string') settings.playbook = playbook.slice(0, 6000);
     if (MODES.includes(mode)) settings.mode = mode;
@@ -481,5 +642,34 @@ export function createBots({ brain, notify }) {
     return status();
   }
 
-  return { setBot, forget, rememberHand, onTableChange, status, saveSettings, isBot: (tableId, uid) => seats.has(keyOf(tableId, uid)), describe, legalize, situation };
+  function playerNotes() {
+    const pc = (a, b) => (b ? Math.round((a / b) * 100) : null);
+    return [...notes.values()]
+      .sort((a, b) => (b.lastSeen ? +new Date(b.lastSeen) : 0) - (a.lastSeen ? +new Date(a.lastSeen) : 0))
+      .map((n) => ({
+        uid: n.uid,
+        name: n.name,
+        hands: n.hands || 0,
+        sessions: n.sessions || 0,
+        vpip: pc(n.vpip, n.hands),
+        pfr: pc(n.pfr, n.hands),
+        aggression: n.calls ? Math.round(((n.bets || 0) / n.calls) * 10) / 10 : n.bets ? null : 0,
+        foldToBet: n.facedBet >= 4 ? pc(n.foldedToBet, n.facedBet) : null,
+        betsWhenCheckedTo: n.checkedTo >= 4 ? pc(n.stabbed, n.checkedTo) : null,
+        riverCall: n.riverFaced >= 3 ? pc(n.riverCalls, n.riverFaced) : null,
+        riverBluffs: n.riverBetShown ? `${n.riverBluffShown || 0} of ${n.riverBetShown}` : null,
+        style: profile(n),
+        shown: (n.shown || []).slice(-3),
+        lastSeen: n.lastSeen,
+      }));
+  }
+
+  async function forgetPlayer(uid) {
+    notes.delete(uid);
+    for (const s of sessions.values()) s.opp.delete(uid);
+    await PlayerNote.deleteOne({ uid });
+    return { ok: true };
+  }
+
+  return { onThrown, onChat, playerNotes, forgetPlayer, setBot, forget, rememberHand, onTableChange, status, saveSettings, isBot: (tableId, uid) => seats.has(keyOf(tableId, uid)), describe, legalize, situation };
 }

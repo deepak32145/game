@@ -89,8 +89,20 @@ adminRouter.get('/bot', (_req, res) => {
 
 adminRouter.post('/bot', async (req, res) => {
   if (!hub.manager) return res.status(503).json({ error: 'The game server is starting' });
-  const { playbook, dailyBudgetUsd, mode, style, model } = req.body || {};
-  res.json(await hub.manager.bots.saveSettings({ playbook, dailyBudgetUsd, mode, style, model }));
+  const { playbook, dailyBudgetUsd, mode, style, model, talk } = req.body || {};
+  res.json(await hub.manager.bots.saveSettings({ playbook, dailyBudgetUsd, mode, style, model, talk }));
+});
+
+// What the bot has learned about each player, across all its games, and forgetting a player.
+adminRouter.get('/bot/players', (_req, res) => {
+  if (!hub.manager) return res.status(503).json({ error: 'The game server is starting' });
+  res.json(hub.manager.bots.playerNotes());
+});
+adminRouter.post('/bot/players/forget', async (req, res) => {
+  if (!hub.manager) return res.status(503).json({ error: 'The game server is starting' });
+  const uid = String(req.body?.uid || '');
+  if (!uid) return res.status(400).json({ error: 'Which player?' });
+  res.json(await hub.manager.bots.forgetPlayer(uid));
 });
 
 adminRouter.get('/bot/decisions', async (req, res) => {

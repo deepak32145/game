@@ -36,7 +36,16 @@ export function createManager(io) {
   const online = new Map(); // user id -> Set of socket ids
   const offlineTimers = new Map();
   // Seats the admin hands to the AI bot (see bots.js). It tells the seat's owner what it decided.
-  const bots = createBots({ brain: createBrain(), notify: (uid, msg) => io.to(room(uid)).emit('bot:decision', msg) });
+  const bots = createBots({
+    brain: createBrain(),
+    notify: (uid, msg) => io.to(room(uid)).emit('bot:decision', msg),
+    // The bot shows its feelings as its owner's seat, through the same rules and limits as everyone.
+    express: {
+      chat: (uid, tableId, text) => chatSend(uid, { tableId, text }),
+      react: (uid, tableId, emote) => reactAs(uid, tableId, emote),
+      throwAt: (uid, tableId, to, item) => throwAt(uid, { tableId, to, item }),
+    },
+  });
 
   const room = (uid) => `user:${uid}`;
   const watchRoom = (id) => `watch:${id}`;
@@ -149,6 +158,7 @@ export function createManager(io) {
     chats.set(tableId, list);
     for (const q of table.seated) io.to(room(q.uid)).emit('chat:msg', { tableId, msg });
     io.to(watchRoom(tableId)).emit('chat:msg', { tableId, msg });
+    bots.onChat(tableId, uid, text); // a bot seat may answer a "gg" or a hello
     return { ok: true };
   }
 
@@ -177,6 +187,7 @@ export function createManager(io) {
     const shot = { id: ++throwSeq, from: from.seat, to: target.seat, item, by: from.name, at: target.name };
     for (const q of table.seated) io.to(room(q.uid)).emit('table:throw', { tableId, shot });
     io.to(watchRoom(tableId)).emit('table:throw', { tableId, shot });
+    bots.onThrown(tableId, uid, from.seat, target.uid, item); // a bot seat may throw something back
     return { ok: true };
   }
 
@@ -192,8 +203,14 @@ export function createManager(io) {
     const uid = socket.data.uid;
     const table = tables.get(tableId);
     if (!table) return fail('That table is no longer running');
+    if (!table.seatOf(uid) && !socket.data.watching.has(tableId)) return fail('Open the table first');
+    return reactAs(uid, tableId, emote);
+  }
+
+  function reactAs(uid, tableId, emote) {
+    const table = tables.get(tableId);
+    if (!table) return fail('That table is no longer running');
     const seat = table.seatOf(uid);
-    if (!seat && !socket.data.watching.has(tableId)) return fail('Open the table first');
     if (!REACTIONS.has(emote)) return fail('Pick a reaction');
     const now = Date.now();
     const recent = (reactTimes.get(uid) || []).filter((at) => now - at < REACT_WINDOW_MS);

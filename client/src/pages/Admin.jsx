@@ -166,7 +166,9 @@ function BotPanel({ token }) {
   const [mode, setMode] = useState('engine');
   const [style, setStyle] = useState('aggressive');
   const [model, setModel] = useState('haiku');
+  const [talk, setTalk] = useState('normal');
   const [decisions, setDecisions] = useState(null);
+  const [players, setPlayers] = useState(null);
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
 
@@ -180,10 +182,19 @@ function BotPanel({ token }) {
           setMode(s.mode || 'engine');
           setStyle(s.style || 'aggressive');
           setModel(s.claudeModel || 'haiku');
+          setTalk(s.talk || 'normal');
         }
       })
       .catch((e) => setError(e.message));
-  const loadDecisions = () => api('/admin/bot/decisions?limit=80', { token }).then(setDecisions).catch(() => setDecisions([]));
+  const loadDecisions = () => {
+    api('/admin/bot/decisions?limit=80', { token }).then(setDecisions).catch(() => setDecisions([]));
+    api('/admin/bot/players', { token }).then(setPlayers).catch(() => setPlayers([]));
+  };
+  const forgetPlayer = async (p) => {
+    if (!window.confirm(`Forget everything the bot has learned about ${p.name}?`)) return;
+    await api('/admin/bot/players/forget', { token, body: { uid: p.uid } }).catch(() => {});
+    loadDecisions();
+  };
   useEffect(() => {
     loadStatus(true);
     loadDecisions();
@@ -194,7 +205,7 @@ function BotPanel({ token }) {
   const save = async () => {
     setError('');
     try {
-      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget), mode, style, model } });
+      const s = await api('/admin/bot', { token, body: { playbook, dailyBudgetUsd: Number(budget), mode, style, model, talk } });
       setStatus(s);
       setSaved('Saved. The bot uses it from its next decision.');
       setTimeout(() => setSaved(''), 3000);
@@ -256,6 +267,14 @@ function BotPanel({ token }) {
           </div>
         )}
         <div className="bot-choice">
+          <span><b>Table talk</b> <small className="muted">How often the bot shows feelings at the table: Hinglish chat, emojis, throwables.</small></span>
+          <div className="seg">
+            {[['off', 'Silent'], ['low', 'Now and then'], ['normal', 'Normal'], ['high', 'Chatty']].map(([k, label]) => (
+              <button key={k} type="button" className={`seg-opt ${talk === k ? 'on' : ''}`} onClick={() => setTalk(k)}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="bot-choice">
           <span><b>Engine style</b> <small className="muted">How boldly the engine plays.</small></span>
           <div className="seg">
             {[['tight', 'Tight'], ['balanced', 'Balanced'], ['aggressive', 'Aggressive']].map(([k, label]) => (
@@ -277,6 +296,40 @@ function BotPanel({ token }) {
           {error && <span className="error small">{error}</span>}
         </div>
       </div>
+
+      <h3 className="bot-log-title">Player notes</h3>
+      <p className="muted small">What the bot has learned about each player across all its games. It starts every new game with these, and today's play counts more.</p>
+      {!players && <p className="muted small">Loading…</p>}
+      {players && players.length === 0 && <p className="muted small">No notes yet. They build up as the bot plays.</p>}
+      {players && players.length > 0 && (
+        <div className="notes-wrap">
+          <table className="notes-table">
+            <thead>
+              <tr>
+                <th>Player</th><th>Reads as</th><th title="Hands seen / games">Hands</th><th title="Share of hands they put money in">Plays</th><th title="Share of hands they raise before the flop">Raises</th>
+                <th title="Bets and raises per call after the flop">Aggr.</th><th title="Folds when bet into after the flop">Folds to bet</th><th title="Bets when checked to">Stabs</th><th title="Calls a river bet">River calls</th><th title="River bets shown down that were bluffs">River bluffs</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              {players.map((p) => (
+                <tr key={p.uid}>
+                  <td><b>{p.name}</b>{p.shown?.length ? <small className="muted"> showed {p.shown.join(', ')}</small> : null}</td>
+                  <td><span className={`note-style ${p.style}`}>{{ maniac: 'Maniac', station: 'Calling station', nit: 'Tight / passive', regular: 'Regular', unknown: 'Not enough hands' }[p.style] || p.style}</span></td>
+                  <td>{p.hands}<small className="muted"> / {p.sessions}</small></td>
+                  <td>{p.vpip ?? '—'}{p.vpip != null && '%'}</td>
+                  <td>{p.pfr ?? '—'}{p.pfr != null && '%'}</td>
+                  <td>{p.aggression ?? 'high'}</td>
+                  <td>{p.foldToBet != null ? `${p.foldToBet}%` : '—'}</td>
+                  <td>{p.betsWhenCheckedTo != null ? `${p.betsWhenCheckedTo}%` : '—'}</td>
+                  <td>{p.riverCall != null ? `${p.riverCall}%` : '—'}</td>
+                  <td>{p.riverBluffs ?? '—'}</td>
+                  <td><button className="btn small" onClick={() => forgetPlayer(p)}>Forget</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <h3 className="bot-log-title">Recent decisions</h3>
       {!decisions && <p className="muted small">Loading…</p>}

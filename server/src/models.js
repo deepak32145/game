@@ -97,7 +97,8 @@ const botSettingsSchema = new mongoose.Schema({
   dailyBudgetUsd: { type: Number, default: 3 },
   mode: { type: String, default: 'engine' }, // engine | hybrid | claude
   style: { type: String, default: 'aggressive' }, // tight | balanced | aggressive
-  model: { type: String, default: 'haiku' }, // haiku | sonnet | opus: the Claude model, when Claude plays
+  model: { type: String, default: 'haiku' },
+  talk: { type: String, default: 'normal' }, // off | low | normal | high: how often the bot chats, reacts and throws // haiku | sonnet | opus: the Claude model, when Claude plays
 });
 
 // One decision the bot made, for the admin to review. Deleted by itself after two weeks.
@@ -128,6 +129,18 @@ const botDecisionSchema = new mongoose.Schema({
 export const User = mongoose.model('User', userSchema);
 export const BotSettings = mongoose.model('BotSettings', botSettingsSchema);
 export const BotDecision = mongoose.model('BotDecision', botDecisionSchema);
+
+// What the bot has learned about each player it has played against, across all its games.
+// Only what it saw at the table: the actions, and cards that were shown face up.
+export const NOTE_COUNTS = ['hands', 'vpip', 'pfr', 'bets', 'calls', 'folds', 'facedBet', 'foldedToBet', 'checkedTo', 'stabbed', 'riverFaced', 'riverCalls', 'riverBets', 'riverBetShown', 'riverBluffShown', 'showdowns', 'sessions'];
+const playerNoteSchema = new mongoose.Schema({
+  uid: { type: String, required: true, unique: true },
+  name: String,
+  ...Object.fromEntries(NOTE_COUNTS.map((k) => [k, { type: Number, default: 0 }])),
+  shown: { type: [String], default: [] }, // the last few hands they showed down
+  lastSeen: Date,
+});
+export const PlayerNote = mongoose.model('PlayerNote', playerNoteSchema);
 export const Hand = mongoose.model('Hand', handSchema);
 export const Txn = mongoose.model('Txn', txnSchema);
 export const LoginCode = mongoose.model('LoginCode', loginCodeSchema);
